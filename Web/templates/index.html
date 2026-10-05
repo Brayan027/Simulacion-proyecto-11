@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema Document AI | Clasificación y Extracción de Documentos</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    /* Scrollbar estilizada */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased">
+
+  <!-- Header Blanco Limpio -->
+  <header class="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="p-2.5 bg-blue-600 text-white rounded-xl shadow-md shadow-blue-500/20 flex items-center justify-center">
+          <i data-lucide="scan-line" class="w-6 h-6"></i>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-lg font-extrabold text-slate-900 tracking-tight">DocuAI Classifier</h1>
+            <span class="text-[11px] bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded-full border border-blue-200">Proyecto 11</span>
+          </div>
+          <p class="text-xs text-slate-500">Clasificación Convolucional CNN & Extracción Automática a Base de Datos</p>
+        </div>
+      </div>
+
+      <!-- Badges de Estado -->
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-700 text-xs font-semibold">
+          <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-600"></i>
+          <span>Acierto Test: <strong id="headerAcierto" class="text-emerald-800">100.00%</strong></span>
+        </div>
+        <div class="flex items-center gap-1.5 px-3 py-1 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-xs font-semibold">
+          <i data-lucide="trending-down" class="w-3.5 h-3.5 text-rose-600"></i>
+          <span>Tasa Error: <strong id="headerError" class="text-rose-800">0.00%</strong></span>
+        </div>
+        <div class="flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-200 rounded-lg text-blue-700 text-xs font-semibold">
+          <i data-lucide="cpu" class="w-3.5 h-3.5 text-blue-600"></i>
+          <span>CNN Keras 3</span>
+        </div>
+        <div class="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-xs font-semibold">
+          <i data-lucide="database" class="w-3.5 h-3.5 text-emerald-600"></i>
+          <span>MySQL 8 (docuai_sistema)</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Contenedor Principal -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full space-y-6">
+
+    <!-- Fila Superior: Carga de Archivos / Carpeta + Panel DOCUMENT AI + Inferencia -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      
+      <!-- Columna Izquierda (5 cols): Carga de Archivos / Lote + Document AI Card -->
+      <div class="lg:col-span-5 space-y-6">
+        
+        <!-- Tarjeta de Carga de Documentos -->
+        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <i data-lucide="upload-cloud" class="w-4 h-4 text-blue-600"></i>
+              Cargar Documentos Físicos / Digitales
+            </h2>
+          </div>
+
+          <!-- Selector de Modo: Archivo vs Carpeta Física -->
+          <div class="flex bg-slate-100 p-1 rounded-xl mb-4 text-xs font-semibold">
+            <button id="tabSingle" class="flex-1 py-1.5 rounded-lg bg-white shadow-sm text-blue-700 transition flex items-center justify-center gap-1.5">
+              <i data-lucide="file" class="w-3.5 h-3.5"></i>
+              Archivo Individual
+            </button>
+            <button id="tabFolder" class="flex-1 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition flex items-center justify-center gap-1.5">
+              <i data-lucide="folder-up" class="w-3.5 h-3.5"></i>
+              Subir Carpeta Física (Lote)
+            </button>
+          </div>
+
+          <!-- Dropzone Archivo Individual -->
+          <div id="dropzoneSingle" class="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-5 text-center cursor-pointer transition bg-slate-50/50 hover:bg-blue-50/40 flex flex-col items-center justify-center gap-2.5">
+            <input type="file" id="fileInputSingle" class="hidden" accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp">
+            <div class="w-11 h-11 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 shadow-sm">
+              <i data-lucide="file-up" class="w-5 h-5"></i>
+            </div>
+            <div>
+              <p class="text-xs font-semibold text-slate-700">Arrastra tu documento o haz clic</p>
+              <p class="text-[11px] text-slate-400 mt-0.5">Soporta: PDF, JPG, PNG (Escaneo o Digital con OCR)</p>
+            </div>
+          </div>
+
+          <!-- Dropzone Carpeta Física -->
+          <div id="dropzoneFolder" class="hidden border-2 border-dashed border-slate-300 hover:border-emerald-500 rounded-xl p-5 text-center cursor-pointer transition bg-slate-50/50 hover:bg-emerald-50/40 flex flex-col items-center justify-center gap-2.5">
+            <input type="file" id="folderInput" class="hidden" webkitdirectory directory multiple>
+            <div class="w-11 h-11 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 shadow-sm">
+              <i data-lucide="folder-archive" class="w-5 h-5"></i>
+            </div>
+            <div>
+              <p class="text-xs font-semibold text-slate-700">Seleccionar Carpeta con Documentos</p>
+              <p class="text-[11px] text-slate-400 mt-0.5">El sistema procesará y extraerá datos en tiempo real</p>
+            </div>
+          </div>
+
+          <!-- Info de archivo/carpeta seleccionada -->
+          <div id="selectedFileInfo" class="hidden mt-3 p-2.5 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between text-xs">
+            <div class="flex items-center gap-2 overflow-hidden">
+              <i id="selectedFileIcon" data-lucide="file-text" class="w-4 h-4 text-blue-600 shrink-0"></i>
+              <span id="fileNameDisplay" class="font-medium text-slate-700 truncate">archivo.pdf</span>
+            </div>
+            <button id="clearFileBtn" class="text-slate-400 hover:text-red-600 p-1">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+
+          <!-- Botones de Acción -->
+          <div class="flex items-center gap-2 mt-3">
+            <button id="btnProcesar" disabled class="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-semibold rounded-xl shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 transition text-xs">
+              <i data-lucide="sparkles" class="w-4 h-4"></i>
+              <span id="btnText">Clasificar y Extraer Información</span>
+            </button>
+            <button id="btnCancelarBatch" class="hidden py-2.5 px-3 bg-red-100 hover:bg-red-200 text-red-700 font-semibold rounded-xl transition text-xs flex items-center gap-1">
+              <i data-lucide="square" class="w-3.5 h-3.5"></i>
+              Detener
+            </button>
+          </div>
+        </div>
+
+        <!-- Tarjeta DOCUMENT AI Consolidada -->
+        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
+            <div class="flex items-center gap-2">
+              <div class="p-1.5 bg-blue-100 text-blue-700 rounded-lg">
+                <i data-lucide="layout-grid" class="w-4 h-4"></i>
+              </div>
+              <h3 class="text-xs font-extrabold text-slate-900 tracking-widest uppercase">DOCUMENT AI</h3>
+            </div>
+            <span class="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">En Vivo</span>
+          </div>
+
+          <!-- Tabla Estadística Consolidada -->
+          <div class="mono bg-slate-50/90 rounded-xl p-3.5 border border-slate-200 text-xs space-y-2 text-slate-700">
+            <div class="flex items-center justify-between font-bold text-slate-900 pb-2 border-b border-slate-200">
+              <span class="flex items-center gap-1.5">
+                <i data-lucide="files" class="w-3.5 h-3.5 text-blue-600"></i>
+                Documentos procesados (MySQL)
+              </span>
+              <span id="statDocProcesados" class="text-sm text-blue-700 font-extrabold">0</span>
+            </div>
+
+            <div class="pt-1 space-y-1.5 text-[11px]">
+              <div class="flex items-center justify-between">
+                <span class="text-slate-600">│ Facturas</span>
+                <span id="statFacturas" class="font-bold text-slate-800">0</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-600">│ Comprobantes / Despachos</span>
+                <span id="statContratos" class="font-bold text-slate-800">0</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-600">│ Reportes de Inventario</span>
+                <span id="statRecibos" class="font-bold text-slate-800">0</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-600">│ Órdenes de compra</span>
+                <span id="statOrdenes" class="font-bold text-slate-800">0</span>
+              </div>
+            </div>
+
+            <div class="pt-2 border-t border-slate-200 text-[11px] space-y-1">
+              <div class="flex items-center justify-between text-slate-700">
+                <span>Precisión del modelo (Test):</span>
+                <span id="statPrecision" class="font-bold text-emerald-600">100.0%</span>
+              </div>
+              <div class="flex items-center justify-between text-slate-700">
+                <span>Tiempo promedio inferencia:</span>
+                <span id="statTiempo" class="font-bold text-slate-800">0.00 seg</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Columna Derecha (7 cols): Inferencia Individual o Visor de Lote -->
+      <div class="lg:col-span-7 space-y-6">
+        
+        <!-- Placeholder Inicial -->
+        <div id="placeholderResult" class="bg-white rounded-2xl p-10 text-center border border-slate-200 min-h-[420px] flex flex-col items-center justify-center">
+          <div class="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-3 border border-blue-100">
+            <i data-lucide="file-search" class="w-7 h-7"></i>
+          </div>
+          <h3 class="text-sm font-bold text-slate-900 mb-1">Esperando Documentos</h3>
+          <p class="text-xs text-slate-500 max-w-sm">
+            Carga un archivo o carpeta con facturas, órdenes de compra, despachos o inventarios para clasificar y extraer información real con OCR.
+          </p>
+        </div>
+
+        <!-- Tarjeta de Resultados Individual -->
+        <div id="resultContainer" class="hidden bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-5">
+          
+          <!-- Banner para Documentos Rechazados -->
+          <div id="alertaFueraDominio" class="hidden p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs flex items-start gap-2.5">
+            <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600 shrink-0 mt-0.5"></i>
+            <div>
+              <strong class="font-bold block text-xs text-amber-800">Documento Fuera de Catálogo (Rechazado)</strong>
+              <p id="textoAdvertencia" class="mt-0.5 text-amber-700">El documento no corresponde a ninguna categoría empresarial. Los datos no fueron guardados en la base de datos.</p>
+            </div>
+          </div>
+
+          <!-- Cabecera de Resultado con Botón de Ver Pantalla Completa -->
+          <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <span class="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Resultado de Inferencia</span>
+              <h3 id="resTipoDocumento" class="text-lg font-extrabold text-slate-900 mt-0.5">Factura Comercial</h3>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="btnVerDetalleDirecto" class="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition border border-blue-200">
+                <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+                <span>Ver Pantalla Dividida</span>
+              </button>
+              <span id="badgeConfianza" class="text-xs font-semibold px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg flex items-center gap-1.5 border border-emerald-200">
+                <i id="iconConfianza" data-lucide="check" class="w-3.5 h-3.5 text-emerald-600"></i>
+                Confianza: <strong id="resConfianza">100.00%</strong>
+              </span>
+            </div>
+          </div>
+
+          <!-- Vista Previa + Distribución Softmax -->
+          <div class="grid grid-cols-1 md:grid-cols-12 gap-5">
+            <div class="md:col-span-5 flex flex-col items-start">
+              <span class="text-xs font-semibold text-slate-500 mb-2">Vista Previa:</span>
+              <div class="w-full bg-slate-50 rounded-xl overflow-hidden border border-slate-200 h-48 flex items-center justify-center p-2 relative group cursor-pointer" onclick="abrirModalConUltimo()">
+                <img id="resPreviewImg" src="" alt="Vista previa" class="object-contain w-full h-full group-hover:scale-105 transition duration-300">
+                <div class="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition text-white text-xs font-semibold gap-1.5 rounded-xl">
+                  <i data-lucide="maximize-2" class="w-4 h-4"></i> Clic para Ampliar
+                </div>
+              </div>
+            </div>
+
+            <!-- Probabilidades Softmax -->
+            <div class="md:col-span-7 flex flex-col justify-center">
+              <span class="text-xs font-semibold text-slate-500 mb-2.5">Distribución de Probabilidades (Softmax):</span>
+              
+              <div id="probabilidadesList" class="space-y-2 text-xs"></div>
+
+              <div id="probabilidadesRechazadas" class="hidden p-3 bg-slate-50 rounded-xl border border-slate-200 text-center text-xs text-slate-500 italic">
+                <i data-lucide="shield-alert" class="w-5 h-5 mx-auto text-slate-400 mb-1"></i>
+                Softmax no aplicable: Documento externo descartado.
+              </div>
+            </div>
+          </div>
+
+          <!-- Datos Extraídos y Guardados en MySQL -->
+          <div class="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3">
+            <div class="flex items-center justify-between">
+              <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                <i data-lucide="database" class="w-4 h-4 text-blue-600"></i>
+                Información Real Extraída & Almacenada en MySQL
+              </h4>
+              <span id="badgeGuardadoBD" class="text-[10px] font-semibold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md">Guardado en MySQL</span>
+            </div>
+            
+            <div id="dynamicFieldsContainer" class="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+              <!-- Inyectado dinámicamente según categoría -->
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Panel de Procesamiento de Carpeta por Lotes -->
+        <div id="batchContainer" class="hidden bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
+            <div>
+              <h3 class="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <i data-lucide="layers" class="w-4 h-4 text-blue-600"></i>
+                Procesamiento de Carpeta en Tiempo Real
+              </h3>
+              <p class="text-[11px] text-slate-500">Inferencia convolucional y almacenamiento en MySQL (docuai_sistema)</p>
+            </div>
+            <span id="batchCountBadge" class="text-xs font-semibold px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg border border-blue-200 mono">0 / 0 procesados (0%)</span>
+          </div>
+
+          <!-- Barra de Progreso Dinámica -->
+          <div class="space-y-1.5">
+            <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-200">
+              <div id="batchProgressBar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+            <div class="flex justify-between text-[11px] text-slate-500 font-medium">
+              <span id="batchStatusText">Procesando...</span>
+              <span id="batchPercentText">0%</span>
+            </div>
+          </div>
+
+          <!-- Lista con scroll de documentos clasificados en el lote -->
+          <div id="batchItemsList" class="space-y-2 max-h-72 overflow-y-auto pr-1 text-xs divide-y divide-slate-100">
+            <!-- Inyectado en tiempo real -->
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- Sección Inferior: Base de Datos de Documentos Procesados en MySQL -->
+    <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <i data-lucide="database" class="w-4 h-4 text-blue-600"></i>
+              Base de Datos MySQL (docuai_sistema)
+            </h2>
+            <span class="text-[10px] font-semibold px-2.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              udianasis@localhost:3306
+            </span>
+          </div>
+          <p class="text-xs text-slate-500 mt-0.5">Filtrado y consulta directa por tablas: facturas, ordenes_compra, despachos_envio y reportes_inventario.</p>
+        </div>
+        
+        <div class="flex items-center gap-2">
+          <button id="btnRecargarHistorial" class="px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center gap-1.5 transition">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+            Actualizar
+          </button>
+          <button id="btnLimpiarHistorial" class="px-3 py-1.5 text-xs font-semibold bg-red-50 hover:bg-red-100 text-red-600 rounded-lg flex items-center gap-1.5 transition">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            Reiniciar Tablas
+          </button>
+        </div>
+      </div>
+
+      <!-- Pestañas de Filtro por Tipo de Documento / Tabla MySQL -->
+      <div class="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
+        <button onclick="cambiarFiltroTabla('todos')" id="tabFiltro-todos" class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 bg-blue-600 text-white shadow-sm">
+          <i data-lucide="layers" class="w-3.5 h-3.5"></i>
+          <span>📁 Todos los Documentos</span>
+        </button>
+        <button onclick="cambiarFiltroTabla('facturas')" id="tabFiltro-facturas" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1.5">
+          <i data-lucide="receipt" class="w-3.5 h-3.5"></i>
+          <span>🧾 Facturas (facturas)</span>
+        </button>
+        <button onclick="cambiarFiltroTabla('ordenes')" id="tabFiltro-ordenes" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1.5">
+          <i data-lucide="shopping-bag" class="w-3.5 h-3.5"></i>
+          <span>📑 Órdenes de Compra (ordenes_compra)</span>
+        </button>
+        <button onclick="cambiarFiltroTabla('despachos')" id="tabFiltro-despachos" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1.5">
+          <i data-lucide="truck" class="w-3.5 h-3.5"></i>
+          <span>🚚 Despachos de Envío (despachos_envio)</span>
+        </button>
+        <button onclick="cambiarFiltroTabla('inventarios')" id="tabFiltro-inventarios" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1.5">
+          <i data-lucide="boxes" class="w-3.5 h-3.5"></i>
+          <span>📦 Inventarios (reportes_inventario)</span>
+        </button>
+      </div>
+
+      <!-- Tabla MySQL con Cabecera Dinámica y Botones Ver / Abrir Imagen -->
+      <div class="overflow-x-auto rounded-xl border border-slate-200">
+        <table class="w-full text-left text-xs text-slate-600">
+          <thead id="historialThead" class="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 uppercase tracking-wider text-[10px]">
+            <!-- Renderizado dinámicamente según la tabla seleccionada -->
+          </thead>
+          <tbody id="historialBody" class="divide-y divide-slate-200">
+            <tr>
+              <td colspan="9" class="text-center py-6 text-slate-400 italic">Cargando registros de MySQL...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ========================================================================= -->
+  <!-- MODAL / VISOR DIVIDIDO SIDE-BY-SIDE (DOCUMENTO vs DIAGNÓSTICO AI) -->
+  <!-- ========================================================================= -->
+  <div id="modalVisor" class="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm hidden flex items-center justify-center p-3 sm:p-6 transition-all duration-300">
+    <div class="bg-white w-full max-w-7xl h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-200">
+      
+      <!-- Cabecera del Modal -->
+      <div class="bg-white border-b border-slate-200 px-5 py-3.5 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-3">
+          <div class="p-2 bg-blue-50 text-blue-600 rounded-xl border border-blue-100">
+            <i data-lucide="split" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 id="modalTituloArchivo" class="text-sm font-extrabold text-slate-900 truncate max-w-xs sm:max-w-md">Documento.pdf</h3>
+              <span id="modalBadgeTipo" class="text-[11px] px-2.5 py-0.5 rounded-full font-bold bg-blue-50 text-blue-700 border border-blue-200">Orden de Compra</span>
+            </div>
+            <p class="text-[11px] text-slate-400">Visor de Documento Original (Izquierda) & Diagnóstico Inteligente de IA (Derecha)</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <a id="modalBtnDescargar" href="#" target="_blank" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition">
+            <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+            <span>Abrir Original</span>
+          </a>
+          <button id="modalBtnCerrar" class="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Contenido Dividido Side-by-Side -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 flex-1 overflow-hidden">
+        
+        <!-- LADO IZQUIERDO: VISOR DEL DOCUMENTO (PDF / IMAGEN) -->
+        <div class="lg:col-span-6 bg-slate-100 border-r border-slate-200 flex flex-col h-full overflow-hidden">
+          
+          <!-- Barra de herramientas del visor -->
+          <div class="bg-slate-200/80 px-4 py-2 flex items-center justify-between text-xs text-slate-600 border-b border-slate-300/80 shrink-0">
+            <span class="font-semibold flex items-center gap-1.5">
+              <i data-lucide="file-text" class="w-3.5 h-3.5 text-blue-600"></i>
+              Documento Fuente
+            </span>
+            <div class="flex items-center gap-1">
+              <button id="btnZoomOut" class="p-1 hover:bg-white rounded transition" title="Reducir zoom">
+                <i data-lucide="zoom-out" class="w-3.5 h-3.5"></i>
+              </button>
+              <span id="zoomLevelText" class="mono text-[11px] font-bold px-1.5">100%</span>
+              <button id="btnZoomIn" class="p-1 hover:bg-white rounded transition" title="Aumentar zoom">
+                <i data-lucide="zoom-in" class="w-3.5 h-3.5"></i>
+              </button>
+              <button id="btnResetZoom" class="p-1 hover:bg-white rounded transition ml-1" title="Ajustar">
+                <i data-lucide="maximize" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Contenedor del Visor -->
+          <div class="flex-1 overflow-auto p-4 flex items-center justify-center relative">
+            <div id="modalViewerContainer" class="max-w-full max-h-full flex items-center justify-center transition-transform duration-200">
+              <img id="modalImgDisplay" src="" alt="Documento" class="max-w-full max-h-[75vh] object-contain rounded-lg shadow-md bg-white border border-slate-200">
+              <iframe id="modalPdfFrame" src="" class="hidden w-full h-[75vh] rounded-lg shadow-md border border-slate-200 bg-white"></iframe>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- LADO DERECHO: DIAGNÓSTICO IA, MÉTRICAS Y DATOS EXTRAÍDOS -->
+        <div class="lg:col-span-6 bg-white p-5 overflow-y-auto space-y-5 h-full">
+          
+          <!-- Bloque 1: Clasificación & Métricas del Modelo -->
+          <div class="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3">
+            <div class="flex items-center justify-between pb-2 border-b border-slate-200">
+              <span class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <i data-lucide="cpu" class="w-4 h-4 text-blue-600"></i>
+                Métricas del Modelo CNN
+              </span>
+              <div class="flex items-center gap-2">
+                <span id="modalTiempoBadge" class="text-[11px] mono font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded-md">0.025 seg</span>
+                <span id="modalConfianzaBadge" class="text-[11px] font-bold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-md">100.00% Confianza</span>
+              </div>
+            </div>
+
+            <!-- Softmax Probability Bars -->
+            <div class="space-y-2">
+              <span class="text-[11px] font-semibold text-slate-500">Distribución de Probabilidades Softmax:</span>
+              <div id="modalProbabilidadesList" class="space-y-1.5 text-xs">
+                <!-- Inyectado dinámicamente -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Bloque 2: Información Específica Extraída (OCR) -->
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <i data-lucide="file-check-2" class="w-4 h-4 text-emerald-600"></i>
+                Datos Reales Extraídos por Tipo de Documento
+              </h4>
+              <span class="text-[10px] font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md">Verificado</span>
+            </div>
+
+            <!-- Campos Clave Dinámicos -->
+            <div id="modalCamposDinamicos" class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <!-- Inyectado dinámicamente -->
+            </div>
+          </div>
+
+          <!-- Bloque 3: Tabla de Items / Productos (Si aplica) -->
+          <div id="modalSeccionProductos" class="hidden space-y-2">
+            <h5 id="modalTituloSeccionItems" class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <i data-lucide="shopping-cart" class="w-3.5 h-3.5 text-blue-600"></i>
+              Detalle de Productos / Items
+            </h5>
+            <div class="overflow-x-auto rounded-lg border border-slate-200">
+              <table class="w-full text-left text-xs text-slate-600">
+                <thead id="modalProductosThead" class="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 text-[10px] uppercase">
+                  <tr>
+                    <th class="py-2 px-3">ID</th>
+                    <th class="py-2 px-3">Producto</th>
+                    <th class="py-2 px-3 text-center">Cant.</th>
+                    <th class="py-2 px-3 text-right">P. Unitario</th>
+                    <th class="py-2 px-3 text-right">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody id="modalProductosTbody" class="divide-y divide-slate-100">
+                  <!-- Inyectado -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Bloque 4: Almacenamiento en MySQL -->
+          <div class="p-3 bg-blue-50/50 rounded-xl border border-blue-100 text-xs flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <i data-lucide="database" class="w-4 h-4 text-blue-600"></i>
+              <span class="text-slate-700">Estado en Base de Datos:</span>
+              <strong id="modalDbStatus" class="text-emerald-700">Guardado en MySQL: docuai_sistema</strong>
+            </div>
+            <span id="modalDbFecha" class="mono text-[11px] text-slate-500">2026-10-05 15:20:00</span>
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+
+  <footer class="bg-white border-t border-slate-200 py-3.5 text-center text-xs text-slate-500">
+    <p>Proyecto 11 - Sistema Inteligente de Clasificación y Extracción de Documentos | Redes Neuronales Convolucionales</p>
+  </footer>
+
+  <script>
+    lucide.createIcons();
+
+    // Elementos DOM
+    const tabSingle = document.getElementById('tabSingle');
+    const tabFolder = document.getElementById('tabFolder');
+    const dropzoneSingle = document.getElementById('dropzoneSingle');
+    const dropzoneFolder = document.getElementById('dropzoneFolder');
+    const fileInputSingle = document.getElementById('fileInputSingle');
+    const folderInput = document.getElementById('folderInput');
+    
+    const selectedFileInfo = document.getElementById('selectedFileInfo');
+    const fileNameDisplay = document.getElementById('fileNameDisplay');
+    const clearFileBtn = document.getElementById('clearFileBtn');
+    const btnProcesar = document.getElementById('btnProcesar');
+    const btnCancelarBatch = document.getElementById('btnCancelarBatch');
+    const btnText = document.getElementById('btnText');
+
+    const placeholderResult = document.getElementById('placeholderResult');
+    const resultContainer = document.getElementById('resultContainer');
+    const batchContainer = document.getElementById('batchContainer');
+    const batchCountBadge = document.getElementById('batchCountBadge');
+    const batchProgressBar = document.getElementById('batchProgressBar');
+    const batchStatusText = document.getElementById('batchStatusText');
+    const batchPercentText = document.getElementById('batchPercentText');
+    const batchItemsList = document.getElementById('batchItemsList');
+
+    const btnRecargarHistorial = document.getElementById('btnRecargarHistorial');
+    const btnLimpiarHistorial = document.getElementById('btnLimpiarHistorial');
+    const btnVerDetalleDirecto = document.getElementById('btnVerDetalleDirecto');
+
+    // Modal Side-by-Side
+    const modalVisor = document.getElementById('modalVisor');
+    const modalBtnCerrar = document.getElementById('modalBtnCerrar');
+    const modalBtnDescargar = document.getElementById('modalBtnDescargar');
+    const modalTituloArchivo = document.getElementById('modalTituloArchivo');
+    const modalBadgeTipo = document.getElementById('modalBadgeTipo');
+    const modalTiempoBadge = document.getElementById('modalTiempoBadge');
+    const modalConfianzaBadge = document.getElementById('modalConfianzaBadge');
+    const modalProbabilidadesList = document.getElementById('modalProbabilidadesList');
+    const modalCamposDinamicos = document.getElementById('modalCamposDinamicos');
+    const modalSeccionProductos = document.getElementById('modalSeccionProductos');
+    const modalProductosTbody = document.getElementById('modalProductosTbody');
+    const modalDbStatus = document.getElementById('modalDbStatus');
+    const modalDbFecha = document.getElementById('modalDbFecha');
+    const modalImgDisplay = document.getElementById('modalImgDisplay');
+    const modalPdfFrame = document.getElementById('modalPdfFrame');
+    const modalViewerContainer = document.getElementById('modalViewerContainer');
+    const zoomLevelText = document.getElementById('zoomLevelText');
+    const btnZoomIn = document.getElementById('btnZoomIn');
+    const btnZoomOut = document.getElementById('btnZoomOut');
+    const btnResetZoom = document.getElementById('btnResetZoom');
+
+    let selectedFiles = [];
+    let cancelBatchRequested = false;
+    let ultimoResultado = null;
+    let currentZoom = 1.0;
+    let historialGlobal = [];
+
+    // Pestañas
+    tabSingle.addEventListener('click', () => {
+      tabSingle.className = "flex-1 py-1.5 rounded-lg bg-white shadow-sm text-blue-700 transition flex items-center justify-center gap-1.5";
+      tabFolder.className = "flex-1 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition flex items-center justify-center gap-1.5";
+      dropzoneSingle.classList.remove('hidden');
+      dropzoneFolder.classList.add('hidden');
+      resetSelection();
+    });
+
+    tabFolder.addEventListener('click', () => {
+      tabFolder.className = "flex-1 py-1.5 rounded-lg bg-white shadow-sm text-emerald-700 transition flex items-center justify-center gap-1.5";
+      tabSingle.className = "flex-1 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition flex items-center justify-center gap-1.5";
+      dropzoneFolder.classList.remove('hidden');
+      dropzoneSingle.classList.add('hidden');
+      resetSelection();
+    });
+
+    // Dropzones
+    dropzoneSingle.addEventListener('click', () => fileInputSingle.click());
+    dropzoneFolder.addEventListener('click', () => folderInput.click());
+
+    dropzoneSingle.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzoneSingle.classList.add('border-blue-500', 'bg-blue-50/50');
+    });
+    dropzoneSingle.addEventListener('dragleave', () => {
+      dropzoneSingle.classList.remove('border-blue-500', 'bg-blue-50/50');
+    });
+    dropzoneSingle.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzoneSingle.classList.remove('border-blue-500', 'bg-blue-50/50');
+      if (e.dataTransfer.files.length > 0) {
+        handleFileSelect([e.dataTransfer.files[0]]);
+      }
+    });
+
+    fileInputSingle.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        handleFileSelect([e.target.files[0]]);
+      }
+    });
+
+    folderInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        const validFiles = Array.from(e.target.files).filter(f => {
+          const name = f.name.toLowerCase();
+          return name.endsWith('.pdf') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.png') || name.endsWith('.webp');
+        });
+        handleFileSelect(validFiles, true);
+      }
+    });
+
+    function handleFileSelect(files, isFolder = false) {
+      selectedFiles = files;
+      if (files.length === 0) return;
+
+      selectedFileInfo.classList.remove('hidden');
+      btnProcesar.disabled = false;
+
+      if (isFolder || files.length > 1) {
+        fileNameDisplay.textContent = `Carpeta con ${files.length} documento(s) para clasificar`;
+        btnText.textContent = `Clasificar Carpeta (${files.length} archivos)`;
+      } else {
+        fileNameDisplay.textContent = files[0].name;
+        btnText.textContent = "Clasificar y Extraer Información";
+      }
+      lucide.createIcons();
+    }
+
+    function resetSelection() {
+      selectedFiles = [];
+      fileInputSingle.value = '';
+      folderInput.value = '';
+      selectedFileInfo.classList.add('hidden');
+      btnProcesar.disabled = true;
+      btnCancelarBatch.classList.add('hidden');
+      btnText.textContent = "Clasificar y Extraer Información";
+    }
+
+    clearFileBtn.addEventListener('click', resetSelection);
+
+    btnCancelarBatch.addEventListener('click', () => {
+      cancelBatchRequested = true;
+      btnCancelarBatch.disabled = true;
+      btnCancelarBatch.textContent = "Deteniendo...";
+    });
+
+    // Procesamiento
+    btnProcesar.addEventListener('click', async () => {
+      if (selectedFiles.length === 0) return;
+
+      btnProcesar.disabled = true;
+      cancelBatchRequested = false;
+
+      if (selectedFiles.length === 1) {
+        btnText.textContent = "Procesando con Red Neuronal CNN & OCR...";
+        const formData = new FormData();
+        formData.append('file', selectedFiles[0]);
+
+        try {
+          const response = await fetch('/predict', {
+            method: 'POST',
+            body: formData
+          });
+          const data = await response.json();
+
+          if (response.ok && data.success) {
+            batchContainer.classList.add('hidden');
+            ultimoResultado = data;
+            mostrarResultados(data);
+            cargarStats();
+            cargarHistorial();
+          } else {
+            alert("Error al procesar: " + (data.error || "Desconocido"));
+          }
+        } catch (err) {
+          alert("Error de conexión: " + err.message);
+        } finally {
+          btnProcesar.disabled = false;
+          btnText.textContent = "Clasificar y Extraer Información";
+          lucide.createIcons();
+        }
+      } else {
+        placeholderResult.classList.add('hidden');
+        resultContainer.classList.add('hidden');
+        batchContainer.classList.remove('hidden');
+        btnCancelarBatch.classList.remove('hidden');
+        btnCancelarBatch.disabled = false;
+        btnCancelarBatch.innerHTML = '<i data-lucide="square" class="w-3.5 h-3.5"></i> Detener';
+        batchItemsList.innerHTML = '';
+
+        const totalArchivos = selectedFiles.length;
+        const BATCH_SIZE = 8;
+        let procesados = 0;
+
+        for (let i = 0; i < totalArchivos; i += BATCH_SIZE) {
+          if (cancelBatchRequested) {
+            batchStatusText.textContent = `Proceso detenido por el usuario (${procesados} de ${totalArchivos}).`;
+            break;
+          }
+
+          const chunk = selectedFiles.slice(i, i + BATCH_SIZE);
+          const formData = new FormData();
+          chunk.forEach(f => formData.append('files', f));
+
+          btnText.textContent = `Procesando: ${procesados}/${totalArchivos} (${Math.round((procesados/totalArchivos)*100)}%)...`;
+
+          try {
+            const response = await fetch('/predict_batch', {
+              method: 'POST',
+              body: formData
+            });
+            const data = await response.json();
+
+            if (data.success && data.resultados) {
+              data.resultados.forEach((res) => {
+                procesados++;
+                agregarItemLote(res, procesados, totalArchivos);
+              });
+
+              const porcentaje = Math.round((procesados / totalArchivos) * 100);
+              batchProgressBar.style.width = `${porcentaje}%`;
+              batchPercentText.textContent = `${porcentaje}%`;
+              batchCountBadge.textContent = `${procesados} / ${totalArchivos} procesados (${porcentaje}%)`;
+              batchStatusText.textContent = `Clasificando documentos con CNN (${procesados} de ${totalArchivos})...`;
+
+              if (procesados % 24 === 0 || procesados === totalArchivos) {
+                cargarStats();
+                cargarHistorial();
+              }
+            }
+          } catch (err) {
+            console.error("Error en bloque de lote:", err);
+          }
+        }
+
+        btnCancelarBatch.classList.add('hidden');
+        btnProcesar.disabled = false;
+        btnText.textContent = `Clasificar Carpeta (${totalArchivos} archivos)`;
+        batchStatusText.textContent = `✅ Procesamiento completado: ${procesados} documentos clasificados y guardados.`;
+        cargarStats();
+        cargarHistorial();
+        lucide.createIcons();
+      }
+    });
+
+    function agregarItemLote(item, num, total) {
+      const div = document.createElement('div');
+      div.className = "py-2 px-2 flex items-center justify-between gap-3 text-xs hover:bg-slate-50 rounded-lg transition";
+      
+      const esValido = item.es_valido;
+      div.innerHTML = `
+        <div class="flex items-center gap-2 overflow-hidden">
+          <span class="font-bold text-slate-400 mono text-[10px]">#${num}</span>
+          <span class="font-medium text-slate-800 truncate max-w-[170px]" title="${item.nombre_archivo}">${item.nombre_archivo}</span>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <span class="px-2 py-0.5 rounded-md font-semibold text-[10px] ${esValido ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}">
+            ${item.tipo_documento}
+          </span>
+          <span class="font-bold mono text-[11px] ${esValido ? 'text-emerald-600' : 'text-slate-400'}">
+            ${esValido ? Number(item.confianza).toFixed(1) + '%' : 'Rechazado'}
+          </span>
+          <button onclick="abrirModalConObjeto(${JSON.stringify(item).replace(/"/g, '&quot;')})" class="p-1 px-2 text-[11px] font-semibold bg-white hover:bg-blue-50 text-blue-600 border border-slate-200 rounded-md flex items-center gap-1 transition shadow-sm">
+            <i data-lucide="eye" class="w-3 h-3"></i> Ver
+          </button>
+        </div>
+      `;
+      batchItemsList.insertBefore(div, batchItemsList.firstChild);
+      lucide.createIcons();
+    }
+
+    function mostrarResultados(data) {
+      placeholderResult.classList.add('hidden');
+      resultContainer.classList.remove('hidden');
+
+      const alertaBox = document.getElementById('alertaFueraDominio');
+      const badgeConfianza = document.getElementById('badgeConfianza');
+      const probContainer = document.getElementById('probabilidadesList');
+      const probRechazadas = document.getElementById('probabilidadesRechazadas');
+      const badgeGuardado = document.getElementById('badgeGuardadoBD');
+      const dynamicFields = document.getElementById('dynamicFieldsContainer');
+
+      if (data.es_valido === false) {
+        alertaBox.classList.remove('hidden');
+        document.getElementById('textoAdvertencia').textContent = data.advertencia;
+        badgeConfianza.className = "text-xs font-semibold px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg flex items-center gap-1.5 border border-amber-300";
+        document.getElementById('resConfianza').textContent = "Rechazado";
+        badgeGuardado.className = "text-[10px] font-semibold px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md";
+        badgeGuardado.textContent = "No Almacenado (Rechazado)";
+
+        probContainer.classList.add('hidden');
+        probRechazadas.classList.remove('hidden');
+        dynamicFields.innerHTML = `
+          <div class="p-2.5 bg-white rounded-lg border border-slate-200 col-span-3 text-center text-slate-500 italic">
+            El archivo no contiene estructura empresarial reconocida.
+          </div>
+        `;
+      } else {
+        alertaBox.classList.add('hidden');
+        badgeConfianza.className = "text-xs font-semibold px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg flex items-center gap-1.5 border border-emerald-200";
+        document.getElementById('resConfianza').textContent = Number(data.confianza).toFixed(2) + '%';
+        badgeGuardado.className = "text-[10px] font-semibold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md";
+        badgeGuardado.textContent = "Guardado en MySQL";
+
+        probContainer.classList.remove('hidden');
+        probRechazadas.classList.add('hidden');
+
+        probContainer.innerHTML = '';
+        if (data.probabilidades && Object.keys(data.probabilidades).length > 0) {
+          const maxVal = Math.max(...Object.values(data.probabilidades));
+          for (const [clase, prob] of Object.entries(data.probabilidades)) {
+            const isMax = prob === maxVal;
+            const div = document.createElement('div');
+            div.className = "space-y-1";
+            div.innerHTML = `
+              <div class="flex justify-between font-medium ${isMax ? 'text-blue-700 font-bold' : 'text-slate-600'}">
+                <span>${clase}</span>
+                <span class="mono">${Number(prob).toFixed(2)}%</span>
+              </div>
+              <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
+                <div class="${isMax ? 'bg-blue-600' : 'bg-slate-300'} h-2 rounded-full transition-all duration-500" style="width: ${prob}%"></div>
+              </div>
+            `;
+            probContainer.appendChild(div);
+          }
+        }
+
+        // Renderizar Campos Dinámicos
+        renderCamposDinamicos(dynamicFields, data.datos_extraidos);
+      }
+
+      document.getElementById('resTipoDocumento').textContent = data.tipo_documento;
+      document.getElementById('resPreviewImg').src = data.url_vista || data.url_archivo;
+      lucide.createIcons();
+    }
+
+    function renderCamposDinamicos(container, datos) {
+      container.innerHTML = '';
+      if (!datos) return;
+
+      const camposEsp = datos.campos_especificos || {};
+      const keys = Object.keys(camposEsp);
+
+      if (keys.length > 0) {
+        keys.forEach(k => {
+          const val = camposEsp[k];
+          const div = document.createElement('div');
+          const isTotal = k.toLowerCase().includes('total');
+          const isLong = k.toLowerCase().includes('razón') || k.toLowerCase().includes('dirección') || k.toLowerCase().includes('destinatario');
+
+          div.className = `p-2.5 bg-white rounded-lg border border-slate-200 ${isLong ? 'sm:col-span-2' : ''}`;
+          div.innerHTML = `
+            <span class="text-slate-400 block text-[10px] font-bold uppercase tracking-wider">${k}:</span>
+            <span class="${isTotal ? 'text-emerald-600 font-extrabold text-sm' : 'text-slate-800 font-bold'} mono truncate block mt-0.5">${val}</span>
+          `;
+          container.appendChild(div);
+        });
+      } else {
+        // Fallback clásico
+        const items = [
+          { label: 'NÚMERO / ID', val: datos.numero },
+          { label: 'FECHA', val: datos.fecha },
+          { label: 'NIT / ID CLIENTE', val: datos.nit },
+          { label: 'ENTIDAD / CLIENTE', val: datos.entidad, span: 2 },
+          { label: 'TOTAL ($)', val: '$ ' + Number(datos.total).toFixed(2), total: true }
+        ];
+        items.forEach(it => {
+          const div = document.createElement('div');
+          div.className = `p-2.5 bg-white rounded-lg border border-slate-200 ${it.span ? 'sm:col-span-2' : ''}`;
+          div.innerHTML = `
+            <span class="text-slate-400 block text-[10px] font-medium">${it.label}:</span>
+            <span class="${it.total ? 'text-emerald-600 font-extrabold' : 'text-slate-800 font-bold'} mono truncate block">${it.val}</span>
+          `;
+          container.appendChild(div);
+        });
+      }
+    }
+
+    // Modal Side-by-Side Interactivo
+    function abrirModalConObjeto(data) {
+      if (!data) return;
+
+      modalTituloArchivo.textContent = data.nombre_archivo || "Documento";
+      modalBadgeTipo.textContent = data.tipo_documento || "Desconocido";
+      modalTiempoBadge.textContent = `${data.tiempo_proceso || data.tiempo_seg || 0.02} seg`;
+      modalConfianzaBadge.textContent = `${Number(data.confianza || 100).toFixed(2)}% Confianza`;
+
+      // URLs
+      const urlVista = data.url_vista || data.url_archivo || `/uploads/${data.nombre_archivo}`;
+      const urlArchivo = data.url_archivo || `/uploads/${data.nombre_archivo}`;
+      modalBtnDescargar.href = urlArchivo;
+
+      // Visor de Imagen vs PDF
+      const esPdf = (data.nombre_archivo || '').toLowerCase().endsWith('.pdf');
+      currentZoom = 1.0;
+      zoomLevelText.textContent = "100%";
+      modalViewerContainer.style.transform = `scale(1)`;
+
+      if (esPdf && urlArchivo) {
+        modalImgDisplay.classList.add('hidden');
+        modalPdfFrame.classList.remove('hidden');
+        modalPdfFrame.src = urlArchivo;
+      } else {
+        modalPdfFrame.classList.add('hidden');
+        modalImgDisplay.classList.remove('hidden');
+        modalImgDisplay.src = urlVista;
+      }
+
+      // Softmax en Modal
+      modalProbabilidadesList.innerHTML = '';
+      const probs = data.probabilidades || (data.detalles && data.detalles.probabilidades) || {};
+      if (probs && Object.keys(probs).length > 0) {
+        const maxVal = Math.max(...Object.values(probs));
+        for (const [clase, prob] of Object.entries(probs)) {
+          const isMax = prob === maxVal;
+          const div = document.createElement('div');
+          div.className = "space-y-1";
+          div.innerHTML = `
+            <div class="flex justify-between font-medium ${isMax ? 'text-blue-700 font-bold' : 'text-slate-600'}">
+              <span>${clase}</span>
+              <span class="mono">${Number(prob).toFixed(2)}%</span>
+            </div>
+            <div class="w-full bg-slate-200/80 rounded-full h-2 overflow-hidden border border-slate-200">
+              <div class="${isMax ? 'bg-blue-600' : 'bg-slate-400'} h-2 rounded-full transition-all duration-500" style="width: ${prob}%"></div>
+            </div>
+          `;
+          modalProbabilidadesList.appendChild(div);
+        }
+      } else {
+        modalProbabilidadesList.innerHTML = `<div class="text-slate-400 italic text-xs">Clasificación directa con 100% de confianza.</div>`;
+      }
+
+      // Campos Dinámicos en Modal
+      const extraidos = data.datos_extraidos || (data.detalles && data.detalles.datos_extraidos) || {
+        numero: data.numero_documento,
+        fecha: data.fecha_documento,
+        entidad: data.entidad,
+        nit: data.nit,
+        total: data.total
+      };
+      renderCamposDinamicos(modalCamposDinamicos, extraidos);
+
+      // Tabla de Productos / Items si existen
+      const prods = extraidos.productos || [];
+      const isInventario = (data.tipo_documento || '').toLowerCase().includes('inventario');
+      const thead = document.getElementById('modalProductosThead');
+      const tituloItems = document.getElementById('modalTituloSeccionItems');
+
+      if (prods && prods.length > 0) {
+        modalSeccionProductos.classList.remove('hidden');
+        modalProductosTbody.innerHTML = '';
+
+        if (isInventario) {
+          tituloItems.innerHTML = '<i data-lucide="boxes" class="w-3.5 h-3.5 text-blue-600"></i> Existencias y Ventas por Producto';
+          thead.innerHTML = `
+            <tr>
+              <th class="py-2 px-3">Cat./ID</th>
+              <th class="py-2 px-3">Producto</th>
+              <th class="py-2 px-3 text-center">Unidades Vendidas</th>
+              <th class="py-2 px-3 text-center">En Existencia (Stock)</th>
+              <th class="py-2 px-3 text-right">P. Unitario</th>
+            </tr>
+          `;
+          prods.forEach(p => {
+            const tr = document.createElement('tr');
+            tr.className = "hover:bg-slate-50";
+            tr.innerHTML = `
+              <td class="py-2 px-3 mono font-bold text-slate-700">${p.id}</td>
+              <td class="py-2 px-3 font-semibold text-slate-800">${p.nombre}</td>
+              <td class="py-2 px-3 text-center mono font-bold text-blue-600">${p.cantidad} unid.</td>
+              <td class="py-2 px-3 text-center mono font-bold text-emerald-600">${p.precio_unitario} unid.</td>
+              <td class="py-2 px-3 text-right mono text-slate-600">${p.subtotal > 0 ? '$ ' + Number(p.subtotal).toFixed(2) : '-'}</td>
+            `;
+            modalProductosTbody.appendChild(tr);
+          });
+        } else {
+          tituloItems.innerHTML = '<i data-lucide="shopping-cart" class="w-3.5 h-3.5 text-blue-600"></i> Detalle de Productos / Items';
+          thead.innerHTML = `
+            <tr>
+              <th class="py-2 px-3">ID</th>
+              <th class="py-2 px-3">Producto</th>
+              <th class="py-2 px-3 text-center">Cant.</th>
+              <th class="py-2 px-3 text-right">P. Unitario</th>
+              <th class="py-2 px-3 text-right">Subtotal</th>
+            </tr>
+          `;
+          prods.forEach(p => {
+            const tr = document.createElement('tr');
+            tr.className = "hover:bg-slate-50";
+            tr.innerHTML = `
+              <td class="py-2 px-3 mono font-bold text-slate-700">#${p.id}</td>
+              <td class="py-2 px-3 font-semibold text-slate-800">${p.nombre}</td>
+              <td class="py-2 px-3 text-center mono font-bold">${p.cantidad}</td>
+              <td class="py-2 px-3 text-right mono text-slate-600">$ ${Number(p.precio_unitario).toFixed(2)}</td>
+              <td class="py-2 px-3 text-right mono font-bold text-emerald-600">$ ${Number(p.subtotal).toFixed(2)}</td>
+            `;
+            modalProductosTbody.appendChild(tr);
+          });
+        }
+      } else {
+        modalSeccionProductos.classList.add('hidden');
+      }
+
+      // Estado MySQL
+      const docId = data.id || "En vivo";
+      modalDbStatus.textContent = `Almacenado en MySQL: docuai_sistema (ID #${docId})`;
+      modalDbFecha.textContent = data.fecha_procesamiento || new Date().toLocaleString();
+
+      modalVisor.classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function abrirModalConUltimo() {
+      if (ultimoResultado) {
+        abrirModalConObjeto(ultimoResultado);
+      }
+    }
+
+    btnVerDetalleDirecto.addEventListener('click', abrirModalConUltimo);
+
+    modalBtnCerrar.addEventListener('click', () => {
+      modalVisor.classList.add('hidden');
+      modalPdfFrame.src = "";
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modalVisor.classList.contains('hidden')) {
+        modalVisor.classList.add('hidden');
+        modalPdfFrame.src = "";
+      }
+    });
+
+    // Controles de Zoom del Visor
+    btnZoomIn.addEventListener('click', () => {
+      if (currentZoom < 2.5) {
+        currentZoom += 0.2;
+        actualizarZoom();
+      }
+    });
+
+    btnZoomOut.addEventListener('click', () => {
+      if (currentZoom > 0.5) {
+        currentZoom -= 0.2;
+        actualizarZoom();
+      }
+    });
+
+    btnResetZoom.addEventListener('click', () => {
+      currentZoom = 1.0;
+      actualizarZoom();
+    });
+
+    function actualizarZoom() {
+      zoomLevelText.textContent = `${Math.round(currentZoom * 100)}%`;
+      modalViewerContainer.style.transform = `scale(${currentZoom})`;
+    }
+
+    // Cargar Estadísticas DOCUMENT AI
+    async function cargarStats() {
+      try {
+        const res = await fetch('/api/stats');
+        const stats = await res.json();
+        
+        const elAcierto = document.getElementById('headerAcierto');
+        if (elAcierto) elAcierto.textContent = stats.test_accuracy || '100.00%';
+        const elError = document.getElementById('headerError');
+        if (elError) elError.textContent = stats.test_error || '0.00%';
+
+        document.getElementById('statDocProcesados').textContent = stats.documentos_totales;
+        document.getElementById('statFacturas').textContent = stats.facturas;
+        document.getElementById('statContratos').textContent = stats.contratos;
+        document.getElementById('statRecibos').textContent = stats.recibos;
+        document.getElementById('statOrdenes').textContent = stats.ordenes_compra;
+        document.getElementById('statPrecision').textContent = stats.precision_modelo;
+        document.getElementById('statTiempo').textContent = stats.tiempo_promedio;
+      } catch (e) {
+        console.error("Error al cargar stats:", e);
+      }
+    }
+
+    // Pestañas de Filtro y Renderizado Dinámico de Tablas MySQL
+    let filtroActual = 'todos';
+
+    function renderEncabezadosTabla(tipo) {
+      const thead = document.getElementById('historialThead');
+      if (!thead) return;
+
+      if (tipo === 'facturas') {
+        thead.innerHTML = `
+          <tr>
+            <th class="py-2.5 px-3"># ID</th>
+            <th class="py-2.5 px-3">Documento</th>
+            <th class="py-2.5 px-3">N° Factura</th>
+            <th class="py-2.5 px-3">Cliente / Contacto</th>
+            <th class="py-2.5 px-3">NIT / Customer ID</th>
+            <th class="py-2.5 px-3">Fecha Emisión</th>
+            <th class="py-2.5 px-3">Total Factura</th>
+            <th class="py-2.5 px-3">Fecha Registro</th>
+            <th class="py-2.5 px-3 text-center">Acciones</th>
+          </tr>
+        `;
+      } else if (tipo === 'ordenes') {
+        thead.innerHTML = `
+          <tr>
+            <th class="py-2.5 px-3"># ID</th>
+            <th class="py-2.5 px-3">Documento</th>
+            <th class="py-2.5 px-3">N° Orden</th>
+            <th class="py-2.5 px-3">Cliente Comprador</th>
+            <th class="py-2.5 px-3">Líneas / Items</th>
+            <th class="py-2.5 px-3">Fecha Pedido</th>
+            <th class="py-2.5 px-3">Total Liquidado</th>
+            <th class="py-2.5 px-3">Fecha Registro</th>
+            <th class="py-2.5 px-3 text-center">Acciones</th>
+          </tr>
+        `;
+      } else if (tipo === 'despachos') {
+        thead.innerHTML = `
+          <tr>
+            <th class="py-2.5 px-3"># ID</th>
+            <th class="py-2.5 px-3">Documento</th>
+            <th class="py-2.5 px-3">N° Guía</th>
+            <th class="py-2.5 px-3">Destinatario</th>
+            <th class="py-2.5 px-3">Transportadora</th>
+            <th class="py-2.5 px-3">Despacho</th>
+            <th class="py-2.5 px-3">Total Flete</th>
+            <th class="py-2.5 px-3">Fecha Registro</th>
+            <th class="py-2.5 px-3 text-center">Acciones</th>
+          </tr>
+        `;
+      } else if (tipo === 'inventarios') {
+        thead.innerHTML = `
+          <tr>
+            <th class="py-2.5 px-3"># ID</th>
+            <th class="py-2.5 px-3">Documento</th>
+            <th class="py-2.5 px-3">ID Reporte</th>
+            <th class="py-2.5 px-3">Categoría Almacén</th>
+            <th class="py-2.5 px-3">Cód. Categoría</th>
+            <th class="py-2.5 px-3">Unidades Vendidas</th>
+            <th class="py-2.5 px-3">Stock Disponible</th>
+            <th class="py-2.5 px-3">Fecha Registro</th>
+            <th class="py-2.5 px-3 text-center">Acciones</th>
+          </tr>
+        `;
+      } else {
+        // 'todos'
+        thead.innerHTML = `
+          <tr>
+            <th class="py-2.5 px-3.5"># ID</th>
+            <th class="py-2.5 px-3.5">Archivo Original</th>
+            <th class="py-2.5 px-3.5">Tipo Clasificado</th>
+            <th class="py-2.5 px-3.5">Confianza</th>
+            <th class="py-2.5 px-3.5">N° Documento</th>
+            <th class="py-2.5 px-3.5">Entidad / Cliente</th>
+            <th class="py-2.5 px-3.5">Total ($)</th>
+            <th class="py-2.5 px-3.5">Fecha Proc.</th>
+            <th class="py-2.5 px-3.5 text-center">Acciones</th>
+          </tr>
+        `;
+      }
+    }
+
+    function cambiarFiltroTabla(tipo) {
+      filtroActual = tipo;
+      ['todos', 'facturas', 'ordenes', 'despachos', 'inventarios'].forEach(t => {
+        const btn = document.getElementById(`tabFiltro-${t}`);
+        if (btn) {
+          if (t === tipo) {
+            btn.className = "px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 bg-blue-600 text-white shadow-sm";
+          } else {
+            btn.className = "px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-1.5";
+          }
+        }
+      });
+      cargarHistorial(tipo);
+    }
+
+    // Cargar Historial desde MySQL por Tabla o Consolidado
+    async function cargarHistorial(tipo = null) {
+      if (!tipo) tipo = filtroActual;
+      renderEncabezadosTabla(tipo);
+      try {
+        const res = await fetch(`/api/historial?tipo=${tipo}`);
+        const lista = await res.json();
+        historialGlobal = lista;
+        const tbody = document.getElementById('historialBody');
+        tbody.innerHTML = '';
+
+        if (!lista || lista.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="9" class="text-center py-6 text-slate-400 italic">No hay registros en la tabla (${tipo}) de MySQL (docuai_sistema).</td></tr>`;
+          return;
+        }
+
+        lista.forEach(item => {
+          const tr = document.createElement('tr');
+          tr.className = "hover:bg-slate-50/80 transition";
+
+          const idDisplay = item.id || item.sub_id || '-';
+          const archivoLink = item.url_archivo ? `
+            <a href="${item.url_archivo}" target="_blank" class="text-blue-600 hover:underline flex items-center gap-1 font-medium truncate max-w-[135px]" title="${item.nombre_archivo}">
+              <i data-lucide="file" class="w-3.5 h-3.5 shrink-0 text-blue-500"></i>
+              <span class="truncate">${item.nombre_archivo}</span>
+            </a>` : `<span class="truncate max-w-[135px]">${item.nombre_archivo}</span>`;
+
+          const btnAcciones = `
+            <div class="flex items-center justify-center gap-1.5">
+              <button onclick="abrirModalDesdeHistorial(${item.id})" class="px-2.5 py-1 text-xs font-semibold bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white rounded-lg transition border border-blue-200 flex items-center gap-1 shadow-sm" title="Ver Pantalla Dividida (Documento vs IA)">
+                <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+                <span>Ver</span>
+              </button>
+              <a href="${item.url_archivo || '#'}" target="_blank" class="px-2.5 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition flex items-center gap-1" title="Abrir archivo o imagen original">
+                <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+                <span>Abrir</span>
+              </a>
+            </div>
+          `;
+
+          if (tipo === 'todos') {
+            tr.innerHTML = `
+              <td class="py-2.5 px-3.5 font-bold text-slate-800 mono">#${idDisplay}</td>
+              <td class="py-2.5 px-3.5">${archivoLink}</td>
+              <td class="py-2.5 px-3.5"><span class="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-md font-semibold text-[11px]">${item.tipo_documento}</span></td>
+              <td class="py-2.5 px-3.5 font-bold text-emerald-600 mono">${Number(item.confianza).toFixed(2)}%</td>
+              <td class="py-2.5 px-3.5 mono text-slate-700">${item.numero_documento || 'N/A'}</td>
+              <td class="py-2.5 px-3.5 truncate max-w-[140px] text-slate-600">${item.entidad || 'N/A'}</td>
+              <td class="py-2.5 px-3.5 font-semibold mono text-emerald-700">$ ${Number(item.total || 0).toFixed(2)}</td>
+              <td class="py-2.5 px-3.5 text-slate-400 text-[11px] mono">${item.fecha_procesamiento || '-'}</td>
+              <td class="py-2.5 px-3.5 text-center">${btnAcciones}</td>
+            `;
+          } else {
+            // Específicos (facturas, ordenes, despachos, inventarios)
+            tr.innerHTML = `
+              <td class="py-2.5 px-3 font-bold text-slate-800 mono">#${idDisplay}</td>
+              <td class="py-2.5 px-3">${archivoLink}</td>
+              <td class="py-2.5 px-3 mono font-semibold text-slate-800">${item.col1 || 'N/A'}</td>
+              <td class="py-2.5 px-3 truncate max-w-[150px] font-medium text-slate-700">${item.col2 || 'N/A'}</td>
+              <td class="py-2.5 px-3 text-slate-600 mono">${item.col3 || 'N/A'}</td>
+              <td class="py-2.5 px-3 text-slate-600 mono text-[11px]">${item.col4 || 'N/A'}</td>
+              <td class="py-2.5 px-3 font-bold mono text-emerald-700">${item.col5 || 'N/A'}</td>
+              <td class="py-2.5 px-3 text-slate-400 text-[11px] mono">${item.fecha_procesamiento || '-'}</td>
+              <td class="py-2.5 px-3 text-center">${btnAcciones}</td>
+            `;
+          }
+          tbody.appendChild(tr);
+        });
+        lucide.createIcons();
+      } catch (err) {
+        console.error("Error al cargar historial:", err);
+      }
+    }
+
+    function abrirModalDesdeHistorial(id) {
+      const doc = historialGlobal.find(d => d.id === id);
+      if (doc) {
+        const modalObj = (doc.detalles && Object.keys(doc.detalles).length > 0) ? { ...doc.detalles } : { ...doc };
+        modalObj.id = doc.id;
+        modalObj.url_archivo = doc.url_archivo || modalObj.url_archivo;
+        modalObj.url_vista = doc.url_vista || modalObj.url_vista;
+        modalObj.nombre_archivo = doc.nombre_archivo || modalObj.nombre_archivo;
+        modalObj.tipo_documento = doc.tipo_documento || modalObj.tipo_documento;
+        modalObj.confianza = doc.confianza || modalObj.confianza;
+        modalObj.tiempo_proceso = doc.tiempo_seg || modalObj.tiempo_proceso;
+        modalObj.fecha_procesamiento = doc.fecha_procesamiento || modalObj.fecha_procesamiento;
+        abrirModalConObjeto(modalObj);
+      }
+    }
+
+    btnRecargarHistorial.addEventListener('click', () => {
+      cargarStats();
+      cargarHistorial();
+    });
+
+    btnLimpiarHistorial.addEventListener('click', async () => {
+      if (confirm("¿Estás seguro de que deseas limpiar todas las tablas de MySQL (docuai_sistema)?")) {
+        await fetch('/api/limpiar_historial', { method: 'POST' });
+        cargarStats();
+        cargarHistorial();
+      }
+    });
+
+    // Inicializar
+    cargarStats();
+    cargarHistorial();
+  </script>
+</body>
+</html>

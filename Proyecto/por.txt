@@ -1,0 +1,101 @@
+Grupos maximo : 3 personas - Proyecto de Aula.
+
+a) Tomar un DataSets de datos sea de www.kaggle.com u otro repositorio de datasets. y crear un modelo de aprendizaje supervisado, para predecir la(s) etiquetas de los datos que descargo. Ya sea para estimar un valor o clasificación de datos, dependiendo su caso asignado.
+
+Debe entregar :  Modelo en formato .IPYNB y su respectivo Datasets normalmente se descarga en formato .csv.  Valoración del modelo (40%).
+
+ - Calidad del datasets : 30%
+
+- Diseño preliminar de su red neuronal 30%
+
+
+
+proyecto:
+
+11.Sistema inteligente de clasificación y extracción de información de
+documentos
+Una empresa recibe diariamente cientos de documentos digitalizados:
+Facturas
+Órdenes de compra
+Recibos
+Contratos
+Formularios
+Comprobantes
+Actualmente un empleado debe revisar cada documento manualmente.
+Solución con AI.
+
+
+
+
+docuemto, modelo cnn/Keras tipos de docuento 
+
+docuento cargado: facuta_0112.jpg,pdf
+
+predcion 
+
+probalidad : 
+
+uana vez indetidiado como factura e sitema pude enctrar 
+
+Numero_
+fehca:
+proveedor:
+ni:
+subtotoal:
+iva:
+totla:
+
+extaer la ifnracion yguardala en una base de datos.
+
+docuento ai, aras su docen aquí, analizar dpcientos,
+
+
+resultado del anlis tipo : 
+confianza:
+numero: fact-232
+fecha:
+proever:
+nit:
+totl:
+guardar exportar,
+
+
+Al final una aplicación web que recibe la imagen del documento y guarda la
+información en una base de datos, y la misma aplicación nos muestra los
+documentos e información extraída.
+
+docientos preocados 
+faturas
+contratosm
+recibos 
+ordenes de contra
+preciondel modelo
+temporp promedio.
+
+
+
+
+
+Descripción de la actividad.  GRUPAL MÁXIMO 3 ESTUDIANTES.
+
+Siguiendo el proyecto de aula: 
+Entrenar el modelo para alcanzar tasas de:   Error <= 0.03   y acierto  > 0.985
+     2.  Graficar las tasas.
+
+     3. implementar un fase de predicción del modelo:  model.predict.   
+
+     4  una fase para guardar el modelo, formato .keras u otro. que le sirva para implementarlo en el despliegue               web sea con python u otro lenguaje.
+
+     5 Hacer una prediccion con datos que no haya uitlizado para entrenar y validar su modelo.
+
+     6. Presentar el preliminar del despliegue de su modelo en un ambiente Web . http://  , ya sea en un ambiente local o utilizando la plataforma vecelapp   u otra.
+
+     Esto con el fin de que su modelo llegue a un ambiente web de produccion.  y los datos para la prediccion sean
+
+    capturados por un formulario y pasados al modelo para su inferencia.
+
+NOTA:  distribución calificación ---> 40% Diseño Modelo   (20%) Tasa de acierto > 98.5% ,  (20%) Tasa error menor a < 3%
+
+NOTA:  NO PUEDE UTILIZAR MODELOS PRE-ENTRENADOS.
+
+EL  MODELO YA DEBE VENIR EN FORMATO .IYPNB Ejecutado. CON SUS GRAFICAS SOLICITADAS DE ERROR Y ACIERTO. TODOS LOS MODELOS DEBEN TRAER SU FASE DE PREDICCION SOBRE UN CONJUNTO DE DATOS DIFERENTES DE TEST Y TRAIN.
