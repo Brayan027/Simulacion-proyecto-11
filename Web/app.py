@@ -634,45 +634,61 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
 
 
 def validar_documento(guardado_path, nombre_archivo):
-    KEYWORDS_EMPRESARIALES = [
-        'invoice', 'order id', 'order date', 'purchase order', 'shipping details', 
-        'ship name', 'stock report', 'units sold', 'units in stock', 'unit price',
-        'totalprice', 'customer id', 'customer details', 'shipper details',
-        'product details', 'northwind', 'bill to', 'ship to', 'quantity',
-        'subtotal', 'tax', 'balance', 'description', 'factura', 'orden de compra',
-        'comprobante', 'despacho', 'remision', 'inventario', 'total a pagar', 'iva',
-        'precio unitario', 'cantidad', 'albaran', 'pedido'
-    ]
-
+    # Términos que identifican documentos ajenos al dominio de facturación/compras/envíos/inventario
     NON_BUSINESS = [
+        'carnet', 'torneo', 'jugador', 'equipo:', 'deporte', 'futbol', 'fútbol', 'cancha', 
+        'arbitro', 'árbitro', 'posicion', 'tarjeta de identidad', 'cedula', 'cédula', 'dni',
         'matriz', 'confusion', 'grafica', 'gráfico', 'grafico', 'predicci', 'entrenamiento', 
         'epoch', 'loss', 'accuracy', 'tasas_acierto', 'acierto_error', 'muestras_test',
         'plot', 'chart', 'diagrama', 'ground truth', 'curva', 'f1-score', 'metric',
         'modelo cnn', 'precision_muestras', 'proyecto de vida', 'licencia para', 
         'departamento de ingenier', 'universidad', 'facultad', 'mapa', 'croquis', 
-        'tesis', 'monografia', 'tarea', 'colombia', 'acacio', 'figura', 'figure', 'heatmap'
+        'tesis', 'monografia', 'tarea', 'colombia', 'acacio', 'figura', 'figure', 'heatmap',
+        'diploma', 'acta de grado', 'certificado', 'carnets'
+    ]
+
+    # Patrones regex de anclaje documental fuerte
+    PATRONES_FUERTES = [
+        r'\binvoice\b', r'\border\s*id\b', r'\border\s*date\b', r'\bpurchase\s*orders?\b',
+        r'\bshipping\s*details\b', r'\bship\s*name\b', r'\bship\s*address\b',
+        r'\bstock\s*report\b', r'\bunits\s*sold\b', r'\bunits\s*in\s*stock\b', r'\bunit\s*price\b',
+        r'\btotalprice\b', r'\bcustomer\s*id\b', r'\bcustomer\s*details\b', r'\bshipper\s*details\b',
+        r'\bproduct\s*details\b', r'\bnorthwind\b', r'\bbill\s*to\b', r'\bship\s*to\b',
+        r'\bfactura\s*comercial\b', r'\borden\s*de\s*compra\b', r'\bgu[ií]a\s*de\s*despacho\b',
+        r'\bremisi[oó]n\b', r'\breporte\s*de\s*inventario\b', r'\btotal\s*a\s*pagar\b',
+        r'\bprecio\s*unitario\b', r'\bexistencias?\b'
+    ]
+
+    # Patrones secundarios (requieren al menos 3)
+    PATRONES_SECUNDARIOS = [
+        r'\bcantidad\b', r'\bquantity\b', r'\bsubtotal\b', r'\btotal\b', r'\bitem\b',
+        r'\bproducto\b', r'\bproduct\b', r'\bdespacho\b', r'\bfecha\b', r'\bdate\b',
+        r'\bpedido\b', r'\biva\b', r'\btax\b', r'\bprice\b', r'\bcategory\b'
     ]
 
     name_low = nombre_archivo.lower()
     txt = extraer_texto_crudo(guardado_path).lower()
 
-    # 1. Filtro estricto de términos no documentales / gráficos / métricas
+    # 1. Filtro estricto de términos no empresariales (carnets, deportes, diplomas, etc.)
     if any(nb in txt or nb in name_low for nb in NON_BUSINESS):
         return False
 
-    # 2. Si el texto contiene múltiples nombres de clases simultáneamente, es un gráfico/matriz comparativa
-    clases_detectadas = sum(1 for c in ['inventory report', 'purchaseorders', 'purchase orders', 'shipping orders', 'invoices'] if c in txt)
+    # 2. Si el texto contiene múltiples nombres de clases simultáneamente, es un gráfico/matriz
+    clases_detectadas = sum(1 for c in [r'\binventory\s*report\b', r'\bpurchase\s*orders?\b', r'\bshipping\s*orders?\b', r'\binvoices?\b'] if re.search(c, txt))
     if clases_detectadas >= 2:
         return False
 
-    # 3. Validación por palabras clave empresariales
-    if len(txt.strip()) > 20:
-        matches = [kw for kw in KEYWORDS_EMPRESARIALES if kw in txt]
-        return len(matches) >= 1
+    # 3. Comprobar si hay al menos un patrón fuerte
+    if any(re.search(pat, txt) for pat in PATRONES_FUERTES):
+        return True
 
-    # 4. Verificación de patrones de nombre de archivo empresarial
-    EMPRESARIAL_STEMS = ['invoice', 'order', 'purchase', 'stockreport', 'stock_report', 'factura', 'recibo', 'despacho', 'remision']
-    if any(kw in name_low for kw in EMPRESARIAL_STEMS):
+    # 4. Comprobar combinación de al menos 3 patrones secundarios
+    if sum(1 for pat in PATRONES_SECUNDARIOS if re.search(pat, txt)) >= 3:
+        return True
+
+    # 5. Verificación de nombre de archivo empresarial legítimo
+    EMPRESARIAL_STEMS = [r'\binvoice', r'\border', r'\bpurchase', r'\bstockreport', r'\bstock_report', r'\bfactura', r'\bdespacho', r'\bremision']
+    if any(re.search(pat, name_low) for pat in EMPRESARIAL_STEMS):
         return True
 
     return False
