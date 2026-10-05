@@ -645,25 +645,38 @@ def validar_documento(guardado_path, nombre_archivo):
     ]
 
     NON_BUSINESS = [
-        'proyecto de vida', 'licencia para', 'departamento de ingenier', 'universidad',
-        'facultad', 'mapa', 'croquis', 'tesis', 'monografia', 'tarea', 'colombia', 'acacio'
+        'matriz', 'confusion', 'grafica', 'gráfico', 'grafico', 'predicci', 'entrenamiento', 
+        'epoch', 'loss', 'accuracy', 'tasas_acierto', 'acierto_error', 'muestras_test',
+        'plot', 'chart', 'diagrama', 'ground truth', 'curva', 'f1-score', 'metric',
+        'modelo cnn', 'precision_muestras', 'proyecto de vida', 'licencia para', 
+        'departamento de ingenier', 'universidad', 'facultad', 'mapa', 'croquis', 
+        'tesis', 'monografia', 'tarea', 'colombia', 'acacio', 'figura', 'figure', 'heatmap'
     ]
 
     name_low = nombre_archivo.lower()
     txt = extraer_texto_crudo(guardado_path).lower()
 
+    # 1. Filtro estricto de términos no documentales / gráficos / métricas
     if any(nb in txt or nb in name_low for nb in NON_BUSINESS):
         return False
 
+    # 2. Si el texto contiene múltiples nombres de clases simultáneamente, es un gráfico/matriz comparativa
+    clases_detectadas = sum(1 for c in ['inventory report', 'purchaseorders', 'purchase orders', 'shipping orders', 'invoices'] if c in txt)
+    if clases_detectadas >= 2:
+        return False
+
+    # 3. Validación por palabras clave empresariales
     if len(txt.strip()) > 20:
         matches = [kw for kw in KEYWORDS_EMPRESARIALES if kw in txt]
         return len(matches) >= 1
 
-    EMPRESARIAL_STEMS = ['invoice', 'order', 'purchase', 'stock', 'factura', 'recibo', 'contrato', 'despacho', 'orden', 'doc', 'real_', 'remision', 'scan', 'escaner']
+    # 4. Verificación de patrones de nombre de archivo empresarial
+    EMPRESARIAL_STEMS = ['invoice', 'order', 'purchase', 'stockreport', 'stock_report', 'factura', 'recibo', 'despacho', 'remision']
     if any(kw in name_low for kw in EMPRESARIAL_STEMS):
         return True
 
     return False
+
 
 
 # 6. Almacenamiento Especializado en MySQL + SQLite
