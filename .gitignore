@@ -39,6 +39,8 @@ wheels/
 *.sqlite3
 Web/uploads/*
 !Web/uploads/.gitkeep
+/dataset.zip
+*.rar
 
 # OS
 Thumbs.db

@@ -1,8 +1,27 @@
 # Simulacion-proyecto-11
 
-## 📄 Sistema Inteligente de Clasificación y Extracción de Documentos (Document AI)
+## 📄 Sistema Inteligente de Clasificación y Extracción de Documentos (Document AI — Modelo Neuronal CNN + LLM + Aprendizaje por Refuerzo)
 
-Sistema integral basado en **Visión por Computadora (Redes Neuronales Convolucionales - CNN)** y **Extracción Óptica de Información (OCR)** para la clasificación automática y digitalización estructurada de documentos empresariales en bases de datos relacionales **MySQL**.
+Sistema integral basado en **Visión por Computadora (Redes Neuronales Convolucionales - CNN)**, **Extracción Óptica de Información (OCR)**, **Modelo de Lenguaje Grande Pre-entrenado (LLM conectado por Pipeline)** y **Aprendizaje por Refuerzo con Feedback Humano (RLHF / Q-Learning)** para la clasificación automática, recomendación inteligente (**> 200 caracteres**) y digitalización estructurada de documentos empresariales en bases de datos relacionales **MySQL** y **SQLite**.
+
+---
+
+### 🧠 Actividad Corte 3 Final: Pipeline Modelo Neuronal + LLM + Aprendizaje por Refuerzo (RL)
+
+1. **Modelo Pre-entrenado LLM conectado por Pipeline (30%):**
+   - Módulo implementado en [`Web/llm_rl_engine.py`](Web/llm_rl_engine.py) (`LLMPipelineEngine`) e integrado en [`Web/app.py`](Web/app.py).
+   - La predicción de la Red Neuronal CNN (`invoices`, `PurchaseOrders`, `Shipping orders`, `Inventory Report`) junto con los campos reales extraídos del documento ingresan como **INPUT** a un **Prompt Estructurado** conectado al pipeline generativo (`Meta-Llama-3.2-3B-Instruct / HuggingFace Pipeline`).
+   - Genera una recomendación ejecutiva, contable y logística de **más de 200 caracteres** (típicamente **600 a 1,100 caracteres**), detallando las acciones específicas a tomar con el documento clasificado.
+
+2. **Aprendizaje por Refuerzo para Calificar Recomendaciones con Feedback del Usuario (30%):**
+   - Implementado mediante un agente de **Q-Learning Contextual (`RLRecommendationAgent`)** con espacio de estados $S$ (las 4 categorías documentales de la CNN) y espacio de acciones $A$ (4 enfoques de recomendación: *Auditoría Contable y Tributaria*, *Gestión Operativa y Logística*, *Análisis Financiero y Tesorería*, *Control Interno 3-Way Match*).
+   - El usuario califica cada recomendación en la interfaz web (de **1 a 5 estrellas** o botones rápidos de recompensa $r \in [-1.0, +1.0]$ + comentario opcional).
+   - El agente actualiza en vivo la Tabla $Q(s, a)$ mediante la ecuación de Bellman / Q-Learning:
+     $$Q(s, a) \leftarrow Q(s, a) + \alpha \cdot \big[ r - Q(s, a) \big]$$
+   - Si el feedback del usuario es negativo ($\le 2\star$), el agente penaliza la estrategia actual, selecciona automáticamente la nueva política óptima $\pi^*(s) = \arg\max_a Q(s, a)$ y **regenera la recomendación del LLM en tiempo real**.
+
+3. **Funcionamiento Integral Web + Base de Datos (40%):**
+   - Interfaz interactiva en [`Web/templates/index.html`](Web/templates/index.html) con visualización del texto generativo del LLM, contador de caracteres, visor del Prompt de entrada, widget de calificación RL por estrellas y panel con la **Matriz $Q(s, a)$ en vivo**.
 
 ---
 
@@ -87,10 +106,9 @@ El sistema cuenta con persistencia automática en **MySQL 8** mediante las sigui
 #### 2. Configuración de Base de Datos MySQL
 El sistema crea automáticamente la base de datos `docuai_sistema` y todas las tablas al iniciar la aplicación.
 Configuración por defecto en `app.py`:
-- **Host**: `127.0.0.1` (puerto `3306`)
-- **Usuario**: `udianasis`
-- **Contraseña**: `ANTONIO1`
-- **Base de Datos**: `docuai_sistema`
+- **Host**: `mysql-torneofutbol.alwaysdata.net` (puerto `3306`)
+- **Usuario**: `torneofutbol`
+- **Base de Datos**: `torneofutbol_docuai_sistema`
 
 #### 3. Iniciar el Servidor Web
 
