@@ -1,4 +1,4 @@
-﻿import io
+import io
 import os
 import json
 import math
@@ -514,6 +514,34 @@ class RLRecommendationAgent:
             'historial_feedback': historial_reciente
         }
 
+    def limpiar_historial_feedback(self, reiniciar_matriz=True):
+        """Borra todos los episodios de feedback RL y opcionalmente reinicia la matriz Q(s,a) a valores base."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM rl_feedback_historial")
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print("Aviso limpiando rl_feedback_historial en SQLite:", e)
+
+        if self.get_mysql_connection:
+            try:
+                conn_my = self.get_mysql_connection()
+                if conn_my:
+                    cur_my = conn_my.cursor()
+                    cur_my.execute("TRUNCATE TABLE rl_feedback_historial;")
+                    conn_my.commit()
+                    conn_my.close()
+            except Exception as e:
+                print("Aviso limpiando rl_feedback_historial en MySQL:", e)
+
+        if reiniciar_matriz:
+            self.q_table = {s: {a: float(Q_INIT_PRIOR[s][a]) for a in LISTA_ACCIONES} for s in ESTADOS_DOCUMENTO}
+            self.visits = {s: {a: 1 for a in LISTA_ACCIONES} for s in ESTADOS_DOCUMENTO}
+            self._guardar_tabla_q()
+        return True
+
 
 class LLMPipelineEngine:
     """
@@ -536,7 +564,7 @@ class LLMPipelineEngine:
         self.gemini_keys = self._cargar_claves_gemini()
         self.gemini_idx = 0
         self.ultimo_modelo = None
-        self.model_name = "Meta-Llama-3.2-3B-Instruct (Pipeline Text-Generation)"
+        self.model_name = "Gemini (gemini-2.5-flash) - API Google"
         self._check_external_providers()
 
     @staticmethod
@@ -603,24 +631,24 @@ class LLMPipelineEngine:
         ajuste_usuario = f"\n[FEEDBACK ESPECÍFICO DEL USUARIO A INCORPORAR]: {comentario_usuario}" if comentario_usuario else ""
 
         prompt = (
-            f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n"
-            f"Eres un Asistente Experto en Auditoría Documental, Finanzas y Logística Empresarial integrado "
-            f"en el pipeline de inteligencia artificial DocuAI (Proyecto 11).\n"
-            f"Política de Aprendizaje por Refuerzo activa: [{decision_rl['accion_nombre']}] "
-            f"(Valor esperado Q(s,a) = {decision_rl['q_valor_actual']:+.3f}).\n"
-            f"Directriz del Agente RL: {decision_rl['directriz_prompt']}{ajuste_usuario}\n"
-            f"<|eot_id|><|start_header_id|>user<|end_header_id|>\n"
-            f"[INPUT DEL MODELO NEURONAL CNN & MOTOR OCR]:\n"
-            f"- Categoría Predicha por Red Neuronal CNN: {tipo_es} (Clase: '{clase_predicha}', Confianza Softmax: {confianza:.2f}%)\n"
-            f"- Identificador del Documento: {numero}\n"
-            f"- Fecha Registrada: {fecha}\n"
-            f"- Entidad / Cliente / Categoría: {entidad} (NIT/Código: {nit})\n"
-            f"- Valor Total Liquidado: ${total:,.2f} USD\n"
-            f"- Líneas / Ítems Detectados ({len(productos)}): {resumen_items}\n\n"
-            f"[INSTRUCCIÓN GENERATIVA]:\n"
-            f"Genera una recomendación ejecutiva, técnica y accionable de MÁS DE 200 CARACTERES orientada al manejo "
-            f"óptimo de este documento clasificado como '{tipo_es}', aplicando el enfoque '{decision_rl['accion_nombre']}'.\n"
-            f"<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
+            f"Actúa como Especialista Senior en Inteligencia Documental, Auditoría Contable y Clasificación Empresarial.\n\n"
+            f"1. CLASIFICACIÓN DEL DOCUMENTO:\n"
+            f"- Tipo Clasificado: {tipo_es} (Clase interna: {clase_predicha})\n"
+            f"- Confianza del Modelo CNN: {confianza:.2f}%\n"
+            f"- ID / Número: {numero}\n"
+            f"- Fecha: {fecha}\n"
+            f"- Razón Social / Entidad: {entidad} (NIT/Código: {nit})\n"
+            f"- Importe Total: ${total:,.2f} USD\n"
+            f"- Detalle de Ítems ({len(productos)}): {resumen_items}\n\n"
+            f"2. POLÍTICA DE DECISIÓN RL ACTIVA:\n"
+            f"- Estrategia Seleccionada: {decision_rl['accion_nombre']} (Valor Q esperado: {decision_rl['q_valor_actual']:+.3f})\n"
+            f"- Directriz Operativa: {decision_rl['directriz_prompt']}{ajuste_usuario}\n\n"
+            f"3. INSTRUCCIONES DE RESPUESTA:\n"
+            f"Genera un dictamen profesional y estructurado de MÁS DE 200 CARACTERES enfocado estrictamente en este documento. "
+            f"Organiza tu respuesta con secciones claras, viñetas y formato profesional: "
+            f"a) Diagnóstico y validación de la clasificación documental. "
+            f"b) Puntos críticos de control según la estrategia '{decision_rl['accion_nombre']}'. "
+            f"c) Acciones recomendadas y próximos pasos para archivo, pago o auditoría."
         )
         return prompt
 

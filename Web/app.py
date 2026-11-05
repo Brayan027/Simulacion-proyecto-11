@@ -1761,6 +1761,20 @@ def api_rl_feedback():
     })
 
 
+@app.route('/api/rl/limpiar_feedback', methods=['POST'])
+def api_rl_limpiar_feedback():
+    """Borra el historial de evaluaciones RL y restablece la matriz Q(s,a) a sus valores base."""
+    reiniciar_matriz = request.json.get('reiniciar_matriz', True) if request.is_json and request.json else True
+    rl_agent.limpiar_historial_feedback(reiniciar_matriz=reiniciar_matriz)
+    stats = rl_agent.obtener_estadisticas_rl()
+    stats['modelo_llm_activo'] = llm_engine.model_name
+    return jsonify({
+        'success': True,
+        'mensaje': 'Historial de evaluaciones de feedback RL y Matriz Q reiniciados con éxito.',
+        'rl_stats': stats
+    })
+
+
 @app.route('/api/llm/regenerar', methods=['POST'])
 def api_llm_regenerar():
     """Regenera la recomendación del LLM para un documento aplicando la política RL óptima o una acción elegida."""

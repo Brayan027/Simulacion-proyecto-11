@@ -302,7 +302,7 @@
                     Recomendación Asistida por LLM
                   </h4>
                   <p id="llmModeloNombre" class="text-[11px] text-indigo-600 font-semibold">
-                    Llama-3.2-3B-Instruct (Pipeline Text-Generation)
+                    Gemini (gemini-2.5-flash) - API Google
                   </p>
                 </div>
               </div>
@@ -346,10 +346,10 @@
             </div>
 
             <!-- Texto de la Recomendación -->
-            <div class="bg-white p-3.5 rounded-xl border border-indigo-100 shadow-inner">
-              <p id="llmTextoRecomendacionMain" class="text-xs text-slate-800 leading-relaxed whitespace-pre-line font-medium">
+            <div class="bg-white p-4 rounded-xl border border-indigo-100 shadow-sm">
+              <div id="llmTextoRecomendacionMain" class="text-xs text-slate-800 leading-relaxed space-y-2">
                 Generando recomendación a partir de la predicción...
-              </p>
+              </div>
             </div>
           </div>
 
@@ -479,10 +479,16 @@
           </div>
         </div>
 
-        <button type="button" onclick="cargarRLStats()" class="px-3 py-1.5 text-xs font-semibold bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg flex items-center gap-1.5 transition">
-          <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
-          <span>Actualizar Métricas</span>
-        </button>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="cargarRLStats()" class="px-3 py-1.5 text-xs font-semibold bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg flex items-center gap-1.5 transition">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+            <span>Actualizar</span>
+          </button>
+          <button type="button" onclick="limpiarFeedbackRL()" class="px-3 py-1.5 text-xs font-semibold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg flex items-center gap-1.5 transition" title="Borrar evaluaciones y reiniciar Q-table">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            <span>Borrar Feedbacks</span>
+          </button>
+        </div>
       </div>
 
       <!-- KPIs del Agente RL -->
@@ -490,7 +496,7 @@
         <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
           <div>
             <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Modelo en Pipeline</span>
-            <strong class="text-slate-900 font-extrabold text-xs block mt-0.5">Llama-3.2-3B-Instruct</strong>
+            <strong id="rlKpiModeloNombre" class="text-slate-900 font-extrabold text-xs block mt-0.5">Gemini (gemini-2.5-flash)</strong>
             <span class="text-[11px] text-emerald-600 font-semibold">Generativo &gt; 200 caracteres</span>
           </div>
           <div class="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
@@ -777,7 +783,7 @@
                   <h5 class="text-xs font-extrabold text-indigo-950 uppercase tracking-wider">
                     Recomendación Asistida por LLM
                   </h5>
-                  <span id="modalLlmModelo" class="text-[10px] text-indigo-600 font-semibold">Llama-3.2-3B-Instruct</span>
+                  <span id="modalLlmModelo" class="text-[10px] text-indigo-600 font-semibold">Gemini (gemini-2.5-flash) - API Google</span>
                 </div>
               </div>
               <div class="flex items-center gap-1.5">
@@ -813,8 +819,8 @@
               <pre id="prePromptPipelineModal" class="whitespace-pre-wrap"></pre>
             </div>
 
-            <div class="bg-white p-3 rounded-lg border border-indigo-100">
-              <p id="modalLlmTexto" class="text-xs text-slate-800 leading-relaxed whitespace-pre-line font-medium"></p>
+            <div class="bg-white p-4 rounded-xl border border-indigo-100 shadow-sm">
+              <div id="modalLlmTexto" class="text-xs text-slate-800 leading-relaxed space-y-2"></div>
             </div>
 
             <!-- Calificación RL en Modal -->
@@ -1710,6 +1716,97 @@
       if (lbl) lbl.textContent = `${n}★ (r = ${MAPA_RECOMPENSAS_UI[n]})`;
     }
 
+    function parseInlineMarkdown(str) {
+      if (!str) return '';
+      return str
+        .replace(/\*\*\*(.*?)\*\*\*/g, '<strong class="font-extrabold text-indigo-950 italic">$1</strong>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-slate-900">$1</strong>')
+        .replace(/\*([^\*\n]+?)\*/g, '<em class="italic text-slate-700">$1</em>')
+        .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 bg-slate-100 text-indigo-700 rounded text-[11px] font-mono border border-slate-200">$1</code>');
+    }
+
+    function formatMarkdownText(texto) {
+      if (!texto) return '';
+      // Escape HTML básico
+      let s = texto
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+      const lines = s.split('\n');
+      let inList = false;
+      const formatted = [];
+
+      for (let line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          if (inList) {
+            formatted.push('</ul>');
+            inList = false;
+          }
+          continue;
+        }
+
+        // Títulos Markdown ###, ##, #
+        const hMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
+        if (hMatch) {
+          if (inList) {
+            formatted.push('</ul>');
+            inList = false;
+          }
+          const level = hMatch[1].length;
+          const content = parseInlineMarkdown(hMatch[2]);
+          if (level <= 2) {
+            formatted.push(`<h4 class="text-xs font-black text-slate-900 mt-3 mb-1.5 pb-1 border-b border-slate-200 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-indigo-600 inline-block"></span>${content}</h4>`);
+          } else {
+            formatted.push(`<h5 class="text-xs font-bold text-indigo-950 mt-2.5 mb-1 flex items-center gap-1.5"><span class="w-1 h-2 rounded bg-indigo-500 inline-block"></span>${content}</h5>`);
+          }
+          continue;
+        }
+
+        // Viñetas: *, -, o •
+        const bulletMatch = trimmed.match(/^[\*\-•]\s+(.+)$/);
+        if (bulletMatch) {
+          if (!inList) {
+            formatted.push('<ul class="space-y-1.5 my-1.5 pl-1">');
+            inList = true;
+          }
+          const content = parseInlineMarkdown(bulletMatch[1]);
+          formatted.push(`<li class="flex items-start gap-2 text-slate-700 text-xs leading-relaxed"><span class="text-indigo-600 font-bold select-none mt-0.5">•</span><span class="flex-1">${content}</span></li>`);
+          continue;
+        }
+
+        if (inList) {
+          formatted.push('</ul>');
+          inList = false;
+        }
+
+        // Listas numeradas: 1. 2. etc
+        const numberMatch = trimmed.match(/^(\d+)[\.\)]\s+(.+)$/);
+        if (numberMatch) {
+          const num = numberMatch[1];
+          const content = parseInlineMarkdown(numberMatch[2]);
+          formatted.push(`<div class="flex items-start gap-2 mt-2.5 mb-1 p-2 bg-slate-50 rounded-lg border border-slate-200/80"><span class="px-1.5 py-0.5 bg-indigo-600 text-white rounded font-bold mono text-[10px] shrink-0">${num}</span><span class="flex-1 font-semibold text-slate-900 text-xs">${content}</span></div>`);
+          continue;
+        }
+
+        // Encabezado en negrita tipo: **Mitigación de Riesgos:** o **Puntos de Control:**
+        const boldHeaderMatch = trimmed.match(/^\*\*([^\*]+?):\*\*\s*(.*)$/);
+        if (boldHeaderMatch) {
+          const headerTitle = parseInlineMarkdown(boldHeaderMatch[1]);
+          const rest = parseInlineMarkdown(boldHeaderMatch[2]);
+          formatted.push(`<div class="mt-2.5 mb-1"><h5 class="text-xs font-bold text-indigo-950 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-sm bg-indigo-600 inline-block"></span>${headerTitle}:</h5>${rest ? `<p class="text-xs text-slate-700 leading-relaxed pl-3 mt-0.5">${rest}</p>` : ''}</div>`);
+          continue;
+        }
+
+        // Párrafo normal
+        formatted.push(`<p class="text-xs text-slate-700 leading-relaxed my-1">${parseInlineMarkdown(trimmed)}</p>`);
+      }
+
+      if (inList) formatted.push('</ul>');
+      return formatted.join('\n');
+    }
+
     function renderLLMRecomendacion(scope, data) {
       if (!data) return;
       const llm = data.llm_recomendacion || (data.detalles && data.detalles.llm_recomendacion) || null;
@@ -1726,16 +1823,17 @@
       );
       const lenChars = (llm && llm.longitud_caracteres) ? llm.longitud_caracteres : texto.length;
       const promptTxt = (llm && llm.prompt_entrada) ? llm.prompt_entrada : `[INPUT CNN]: Clase=${data.tipo_documento} (${data.confianza}%) -> [LLM PIPELINE]`;
-      const modeloNombre = (llm && llm.modelo_llm) ? llm.modelo_llm : 'LLM (ver proveedor activo)';
+      const modeloNombre = (llm && llm.modelo_llm) ? llm.modelo_llm : 'Gemini (gemini-2.5-flash) - API Google';
       const qVal = Number(rlDec.q_valor_actual !== undefined ? rlDec.q_valor_actual : 0.72);
       const qStr = (qVal >= 0 ? '+' : '') + qVal.toFixed(3);
+      const htmlFormateado = formatMarkdownText(texto);
 
       if (scope === 'modal') {
         document.getElementById('modalLlmModelo').textContent = modeloNombre;
         document.getElementById('modalLlmPoliticaBadge').textContent = `Política RL: ${rlDec.accion_nombre} (Q: ${qStr})`;
         document.getElementById('modalLlmCharsBadge').textContent = `${lenChars} chars`;
         document.getElementById('prePromptPipelineModal').textContent = promptTxt;
-        document.getElementById('modalLlmTexto').textContent = texto;
+        document.getElementById('modalLlmTexto').innerHTML = htmlFormateado;
         const alertaM = document.getElementById('alertaResultadoRLModal');
         if (alertaM) alertaM.classList.add('hidden');
       } else {
@@ -1743,7 +1841,7 @@
         document.getElementById('llmTextoPoliticaRL').textContent = `Política RL: ${rlDec.accion_nombre} (Q: ${qStr})`;
         document.getElementById('llmBadgeCaracteres').textContent = `${lenChars} chars`;
         document.getElementById('prePromptPipelineMain').textContent = promptTxt;
-        document.getElementById('llmTextoRecomendacionMain').textContent = texto;
+        document.getElementById('llmTextoRecomendacionMain').innerHTML = htmlFormateado;
 
         const alertaMain = document.getElementById('alertaResultadoRLMain');
         if (alertaMain) alertaMain.classList.add('hidden');
@@ -1894,6 +1992,10 @@
         document.getElementById('rlStatRecompensa').textContent = `${recVal >= 0 ? '+' : ''}${recVal.toFixed(3)}`;
         const hScore = document.getElementById('headerRLScore');
         if (hScore) hScore.textContent = `${Number(data.promedio_estrellas).toFixed(1)}★ (${data.total_episodios} feedbacks)`;
+        if (data.modelo_llm_activo) {
+          const modEl = document.getElementById('rlKpiModeloNombre');
+          if (modEl) modEl.textContent = data.modelo_llm_activo;
+        }
 
         // Renderizar Matriz Q(s, a)
         const qBody = document.getElementById('rlQTableBody');
@@ -1963,6 +2065,24 @@
         }
       } catch (e) {
         console.error("Error cargando RL stats:", e);
+      }
+    }
+
+    async function limpiarFeedbackRL() {
+      if (!confirm("¿Deseas borrar todo el historial de evaluaciones de feedback RL y reiniciar la Matriz Q a sus valores base?")) return;
+      try {
+        const res = await fetch('api/rl/limpiar_feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reiniciar_matriz: true })
+        });
+        const data = await res.json();
+        if (data.success) {
+          cargarRLStats();
+          alert("Historial de feedbacks eliminado y Matriz Q reiniciada correctamente.");
+        }
+      } catch (err) {
+        console.error("Error al limpiar feedback RL:", err);
       }
     }
 
