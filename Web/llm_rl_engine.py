@@ -517,7 +517,7 @@ class RLRecommendationAgent:
     def limpiar_historial_feedback(self, reiniciar_matriz=True):
         """Borra todos los episodios de feedback RL y opcionalmente reinicia la matriz Q(s,a) a valores base."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=15)
             cur = conn.cursor()
             cur.execute("DELETE FROM rl_feedback_historial")
             conn.commit()
@@ -529,9 +529,8 @@ class RLRecommendationAgent:
             try:
                 conn_my = self.get_mysql_connection()
                 if conn_my:
-                    cur_my = conn_my.cursor()
-                    cur_my.execute("TRUNCATE TABLE rl_feedback_historial;")
-                    conn_my.commit()
+                    with conn_my.cursor() as cur_my:
+                        cur_my.execute("TRUNCATE TABLE rl_feedback_historial;")
                     conn_my.close()
             except Exception as e:
                 print("Aviso limpiando rl_feedback_historial en MySQL:", e)
@@ -539,7 +538,43 @@ class RLRecommendationAgent:
         if reiniciar_matriz:
             self.q_table = {s: {a: float(Q_INIT_PRIOR[s][a]) for a in LISTA_ACCIONES} for s in ESTADOS_DOCUMENTO}
             self.visits = {s: {a: 1 for a in LISTA_ACCIONES} for s in ESTADOS_DOCUMENTO}
-            self._guardar_tabla_q()
+            self.cum_reward = {s: {a: 0.0 for a in LISTA_ACCIONES} for s in ESTADOS_DOCUMENTO}
+            ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                conn = sqlite3.connect(self.db_path, timeout=15)
+                cur = conn.cursor()
+                for s in ESTADOS_DOCUMENTO:
+                    for a in LISTA_ACCIONES:
+                        cur.execute('''
+                            INSERT OR REPLACE INTO rl_q_table
+                            (estado_clase, accion_estrategia, q_valor, visitas, recompensa_acumulada, ultima_actualizacion)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        ''', (s, a, round(self.q_table[s][a], 4), 1, 0.0, ahora))
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                print("Aviso reiniciando rl_q_table en SQLite:", e)
+
+            if self.get_mysql_connection:
+                try:
+                    conn_my = self.get_mysql_connection()
+                    if conn_my:
+                        with conn_my.cursor() as cur_my:
+                            for s in ESTADOS_DOCUMENTO:
+                                for a in LISTA_ACCIONES:
+                                    cur_my.execute('''
+                                        INSERT INTO rl_q_table
+                                        (estado_clase, accion_estrategia, q_valor, visitas, recompensa_acumulada, ultima_actualizacion)
+                                        VALUES (%s, %s, %s, %s, %s, %s)
+                                        ON DUPLICATE KEY UPDATE
+                                            q_valor = VALUES(q_valor),
+                                            visitas = VALUES(visitas),
+                                            recompensa_acumulada = VALUES(recompensa_acumulada),
+                                            ultima_actualizacion = VALUES(ultima_actualizacion)
+                                    ''', (s, a, round(self.q_table[s][a], 4), 1, 0.0, ahora))
+                        conn_my.close()
+                except Exception as e:
+                    print("Aviso reiniciando rl_q_table en MySQL:", e)
         return True
 
 
