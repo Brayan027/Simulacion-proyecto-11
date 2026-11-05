@@ -1,3 +1,4 @@
+﻿import io
 import os
 import json
 import math
@@ -532,11 +533,37 @@ class LLMPipelineEngine:
         self.db_path = db_path
         self.get_mysql_connection = mysql_conn_fn
         self.hf_pipeline = None
+        self.gemini_keys = self._cargar_claves_gemini()
+        self.gemini_idx = 0
         self.model_name = "Meta-Llama-3.2-3B-Instruct (Pipeline Text-Generation)"
         self._check_external_providers()
 
+    @staticmethod
+    def _cargar_claves_gemini():
+        """Lee claves Gemini de GEMINI_API_KEYS (separadas por coma), GEMINI_API_KEY o del archivo Web/.env."""
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+        if os.path.exists(env_path):
+            for linea in io.open(env_path, encoding="utf-8"):
+                linea = linea.strip()
+                if linea and not linea.startswith("#") and "=" in linea:
+                    k, v = linea.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        crudo = os.environ.get("GEMINI_API_KEYS", "") + "," + os.environ.get("GEMINI_API_KEY", "")
+        claves = []
+        for c in crudo.split(","):
+            c = c.strip()
+            if c and c not in claves:
+                claves.append(c)
+        return claves
+
+    MODELO_FALLBACK = "Motor contextual local por plantillas (sin LLM externo)"
+
     def _check_external_providers(self):
-        if os.environ.get("GROQ_API_KEY"):
+        """Detecta el proveedor LLM real disponible (por variable de entorno); si no hay, queda el motor local."""
+        self.model_name = self.MODELO_FALLBACK
+        if self.gemini_keys:
+            self.model_name = "Gemini (%s) - API Google" % os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        elif os.environ.get("GROQ_API_KEY"):
             self.model_name = "Meta-Llama-3.3-70B-Versatile (Groq LLM Pipeline)"
         elif os.environ.get("OPENAI_API_KEY"):
             self.model_name = "GPT-4o-mini (OpenAI LLM Pipeline)"
@@ -546,9 +573,8 @@ class LLMPipelineEngine:
                 hf_mod = os.environ.get("HF_LOCAL_MODEL")
                 self.hf_pipeline = pipeline("text-generation", model=hf_mod)
                 self.model_name = f"HuggingFace Pipeline ({hf_mod})"
-            except Exception:
-                pass
-
+            except Exception as e:
+                print("Aviso: no se pudo cargar HF_LOCAL_MODEL:", e)
     def construir_prompt(self, clase_predicha, tipo_es, confianza, datos_extraidos, decision_rl, comentario_usuario=""):
         """
         Diseña el Prompt Estructurado donde la predicción del modelo neuronal CNN
@@ -596,38 +622,69 @@ class LLMPipelineEngine:
         return prompt
 
     def _llamar_api_externa_si_disponible(self, prompt):
-        """Intenta usar API externa (Groq Llama-3 / OpenAI) si el usuario configuró clave en variables de entorno."""
-        groq_key = os.environ.get("GROQ_API_KEY")
-        openai_key = os.environ.get("OPENAI_API_KEY")
-        if not groq_key and not openai_key:
-            return None
-
+        """Invoca un LLM real (Gemini / Groq Llama-3 / OpenAI / HF local) si hay configuracion. Devuelve None si falla."""
+        import urllib.request
+        import urllib.error
+        import re as _re
+        # El prompt usa tokens de formato Llama; se limpian para APIs de chat genericas.
+        limpio = _re.sub(r"<\|[^|]+\|>", "", prompt).replace("system\n", "", 1).strip()
         try:
-            import urllib.request
-            url = "https://api.groq.com/openai/v1/chat/completions" if groq_key else "https://api.openai.com/v1/chat/completions"
-            key = groq_key or openai_key
-            model = "llama-3.3-70b-versatile" if groq_key else "gpt-4o-mini"
+            if self.hf_pipeline is not None:
+                out = self.hf_pipeline(limpio, max_new_tokens=350, do_sample=True, temperature=0.4,
+                                       return_full_text=False)
+                txt = out[0]["generated_text"].strip()
+                return txt if len(txt) > 200 else None
 
+            if self.gemini_keys:
+                mod = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent"
+                body = json.dumps({"contents": [{"parts": [{"text": limpio}]}],
+                                   "generationConfig": {"temperature": 0.4, "maxOutputTokens": 1200, "thinkingConfig": {"thinkingBudget": 0}}}).encode("utf-8")
+                n = len(self.gemini_keys)
+                for i in range(n):
+                    idx = (self.gemini_idx + i) % n
+                    req = urllib.request.Request(url, data=body, headers={
+                        "Content-Type": "application/json", "x-goog-api-key": self.gemini_keys[idx]})
+                    try:
+                        with urllib.request.urlopen(req, timeout=20) as resp:
+                            data = json.loads(resp.read().decode("utf-8"))
+                        txt = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        self.gemini_idx = idx
+                        if len(txt) > 200:
+                            return txt
+                        return None
+                    except urllib.error.HTTPError as he:
+                        # 429 cuota/creditos agotados, 401/403 clave invalida: pasar a la siguiente clave
+                        print(f"Aviso: clave Gemini #{idx + 1} fallo (HTTP {he.code}), probando la siguiente.")
+                        continue
+                    except Exception as ex:
+                        print(f"Aviso: clave Gemini #{idx + 1} error de red/formato ({ex}), probando la siguiente.")
+                        continue
+                print("Aviso: todas las claves Gemini fallaron.")
+
+            groq_key = os.environ.get("GROQ_API_KEY")
+            openai_key = os.environ.get("OPENAI_API_KEY")
+            if not groq_key and not openai_key:
+                return None
+            url = "https://api.groq.com/openai/v1/chat/completions" if groq_key else "https://api.openai.com/v1/chat/completions"
+            model = "llama-3.3-70b-versatile" if groq_key else "gpt-4o-mini"
             body = json.dumps({
                 "model": model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [{"role": "user", "content": limpio}],
                 "temperature": 0.4,
-                "max_tokens": 380
+                "max_tokens": 450
             }).encode('utf-8')
-
             req = urllib.request.Request(url, data=body, headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {key}"
+                "Authorization": f"Bearer {groq_key or openai_key}"
             })
-            with urllib.request.urlopen(req, timeout=6) as resp:
+            with urllib.request.urlopen(req, timeout=20) as resp:
                 data = json.loads(resp.read().decode('utf-8'))
-                txt = data["choices"][0]["message"]["content"].strip()
-                if len(txt) > 200:
-                    return txt
-        except Exception:
-            pass
+            txt = data["choices"][0]["message"]["content"].strip()
+            return txt if len(txt) > 200 else None
+        except Exception as e:
+            print("Aviso: fallo la llamada al LLM, se usa el motor local:", e)
         return None
-
     def _sintetizar_recomendacion_contextual(self, clase_raw, tipo_es, confianza, datos, decision_rl, comentario_usuario=""):
         """
         Motor Generativo Contextual del Pipeline LLM:
@@ -861,7 +918,9 @@ class LLMPipelineEngine:
 
         # 3. Ejecutar inferencia del LLM por pipeline (API externa / HF Pipeline / Motor Contextual Instruct)
         texto_generado = self._llamar_api_externa_si_disponible(prompt)
+        modelo_usado = self.model_name
         if not texto_generado:
+            modelo_usado = self.MODELO_FALLBACK
             texto_generado = self._sintetizar_recomendacion_contextual(
                 clase_raw=decision_rl['estado'],
                 tipo_es=tipo_es,
@@ -893,7 +952,7 @@ class LLMPipelineEngine:
                  texto_recomendacion, longitud_caracteres, comentario_feedback, fecha_generacion)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                documento_id, decision_rl['estado'], self.model_name, decision_rl['accion_id'],
+                documento_id, decision_rl['estado'], modelo_usado, decision_rl['accion_id'],
                 prompt, texto_generado, longitud, comentario_usuario or '', ahora
             ))
             rec_id = cur.lastrowid
@@ -913,7 +972,7 @@ class LLMPipelineEngine:
                              texto_recomendacion, longitud_caracteres, comentario_feedback, fecha_generacion)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ''', (
-                            documento_id, decision_rl['estado'], self.model_name, decision_rl['accion_id'],
+                            documento_id, decision_rl['estado'], modelo_usado, decision_rl['accion_id'],
                             prompt, texto_generado, longitud, comentario_usuario or '', ahora
                         ))
                         if not rec_id:
@@ -924,7 +983,7 @@ class LLMPipelineEngine:
 
         return {
             'id_recomendacion': rec_id,
-            'modelo_llm': self.model_name,
+            'modelo_llm': modelo_usado,
             'pipeline_tipo': 'CNN Prediction -> RL Policy Agent -> LLM Text-Generation Pipeline',
             'texto': texto_generado,
             'longitud_caracteres': longitud,

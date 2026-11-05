@@ -10,7 +10,7 @@ Sistema integral basado en **Visión por Computadora (Redes Neuronales Convoluci
 
 1. **Modelo Pre-entrenado LLM conectado por Pipeline (30%):**
    - Módulo implementado en [`Web/llm_rl_engine.py`](Web/llm_rl_engine.py) (`LLMPipelineEngine`) e integrado en [`Web/app.py`](Web/app.py).
-   - La predicción de la Red Neuronal CNN (`invoices`, `PurchaseOrders`, `Shipping orders`, `Inventory Report`) junto con los campos reales extraídos del documento ingresan como **INPUT** a un **Prompt Estructurado** conectado al pipeline generativo (`Meta-Llama-3.2-3B-Instruct / HuggingFace Pipeline`).
+   - La predicción de la Red Neuronal CNN (`invoices`, `PurchaseOrders`, `Shipping orders`, `Inventory Report`) junto con los campos reales extraídos del documento ingresan como **INPUT** a un **Prompt Estructurado** conectado al pipeline generativo (LLM real vía API: `GEMINI_API_KEY` (Gemini), `GROQ_API_KEY` (Llama-3.3-70B) u `OPENAI_API_KEY`; o local con `HF_LOCAL_MODEL`). **Sin ninguna configurada se usa un motor local por plantillas, rotulado en la interfaz como "sin LLM externo".**.
    - Genera una recomendación ejecutiva, contable y logística de **más de 200 caracteres** (típicamente **600 a 1,100 caracteres**), detallando las acciones específicas a tomar con el documento clasificado.
 
 2. **Aprendizaje por Refuerzo para Calificar Recomendaciones con Feedback del Usuario (30%):**

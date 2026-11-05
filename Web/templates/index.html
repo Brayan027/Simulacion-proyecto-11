@@ -51,7 +51,7 @@
         </div>
         <div class="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 shadow-sm rounded-lg text-slate-700 text-xs font-medium">
           <i data-lucide="sparkles" class="w-3.5 h-3.5 text-indigo-600"></i>
-          <span>LLM: <strong class="text-slate-800">Llama-3.2 Instruct</strong></span>
+          <span>LLM: <strong class="text-slate-800">Pipeline LLM (Gemini/Llama/GPT)</strong></span>
         </div>
         <div class="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 shadow-sm rounded-lg text-slate-700 text-xs font-medium">
           <i data-lucide="brain-circuit" class="w-3.5 h-3.5 text-amber-500"></i>
@@ -1047,7 +1047,7 @@
         try {
           let response;
           try {
-            response = await fetch('/predict', {
+            response = await fetch('predict', {
               method: 'POST',
               body: formData
             });
@@ -1058,7 +1058,7 @@
             btnText.textContent = "Reconectando con el servidor...";
             await fetch('/wake.php').catch(() => {});
             await new Promise(r => setTimeout(r, 1200));
-            response = await fetch('/predict', {
+            response = await fetch('predict', {
               method: 'POST',
               body: formData
             });
@@ -1107,7 +1107,7 @@
           btnText.textContent = `Procesando: ${procesados}/${totalArchivos} (${Math.round((procesados/totalArchivos)*100)}%)...`;
 
           try {
-            const response = await fetch('/predict_batch', {
+            const response = await fetch('predict_batch', {
               method: 'POST',
               body: formData
             });
@@ -1460,7 +1460,7 @@
     // Cargar Estadísticas
     async function cargarStats() {
       try {
-        const res = await fetch('/api/stats');
+        const res = await fetch('api/stats');
         const stats = await res.json();
         
         const elAcierto = document.getElementById('headerAcierto');
@@ -1577,7 +1577,7 @@
       if (!tipo) tipo = filtroActual;
       renderEncabezadosTabla(tipo);
       try {
-        const res = await fetch(`/api/historial?tipo=${tipo}`);
+        const res = await fetch(`api/historial?tipo=${tipo}`);
         const lista = await res.json();
         historialGlobal = lista;
         const tbody = document.getElementById('historialBody');
@@ -1668,7 +1668,7 @@
 
     btnLimpiarHistorial.addEventListener('click', async () => {
       if (confirm("¿Estás seguro de que deseas limpiar los registros de la base de datos?")) {
-        await fetch('/api/limpiar_historial', { method: 'POST' });
+        await fetch('api/limpiar_historial', { method: 'POST' });
         cargarStats();
         cargarHistorial();
       }
@@ -1726,7 +1726,7 @@
       );
       const lenChars = (llm && llm.longitud_caracteres) ? llm.longitud_caracteres : texto.length;
       const promptTxt = (llm && llm.prompt_entrada) ? llm.prompt_entrada : `[INPUT CNN]: Clase=${data.tipo_documento} (${data.confianza}%) -> [LLM PIPELINE]`;
-      const modeloNombre = (llm && llm.modelo_llm) ? llm.modelo_llm : 'Llama-3.2-3B-Instruct (Pipeline Text-Generation)';
+      const modeloNombre = (llm && llm.modelo_llm) ? llm.modelo_llm : 'LLM (ver proveedor activo)';
       const qVal = Number(rlDec.q_valor_actual !== undefined ? rlDec.q_valor_actual : 0.72);
       const qStr = (qVal >= 0 ? '+' : '') + qVal.toFixed(3);
 
@@ -1795,7 +1795,7 @@
       };
 
       try {
-        const res = await fetch('/api/rl/feedback', {
+        const res = await fetch('api/rl/feedback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -1856,7 +1856,7 @@
       const datosExt = targetData.datos_extraidos || (targetData.detalles && targetData.detalles.datos_extraidos) || {};
 
       try {
-        const res = await fetch('/api/llm/regenerar', {
+        const res = await fetch('api/llm/regenerar', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1883,7 +1883,7 @@
 
     async function cargarRLStats() {
       try {
-        const res = await fetch('/api/rl/stats');
+        const res = await fetch('api/rl/stats');
         const data = await res.json();
         if (!data.success) return;
 
@@ -1973,7 +1973,7 @@
     cargarHistorial();
 
     setInterval(() => {
-      fetch('/api/stats').catch(() => {});
+      fetch('api/stats').catch(() => {});
     }, 120000);
   </script>
 </body>
