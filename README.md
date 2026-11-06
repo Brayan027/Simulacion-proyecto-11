@@ -20,8 +20,8 @@ Sistema integral basado en **Visión por Computadora (Redes Neuronales Convoluci
      $$Q(s, a) \leftarrow Q(s, a) + \alpha \cdot \big[ r - Q(s, a) \big]$$
    - Si el feedback del usuario es negativo ($\le 2\star$), el agente penaliza la estrategia actual, selecciona automáticamente la nueva política óptima $\pi^*(s) = \arg\max_a Q(s, a)$ y **regenera la recomendación del LLM en tiempo real**.
 
-3. **Funcionamiento Integral Web + Base de Datos (40%):**
-   - Interfaz interactiva en [`Web/templates/index.html`](Web/templates/index.html) con visualización del texto generativo del LLM, contador de caracteres, visor del Prompt de entrada, widget de calificación RL por estrellas y panel con la **Matriz $Q(s, a)$ en vivo**.
+3. **Funcionamiento Integral Web + Base de Datos + Exportación (40%):**
+   - Interfaz interactiva en [`Web/templates/index.html`](Web/templates/index.html) con visualización del texto generativo del LLM, contador de caracteres, visor del Prompt de entrada, widget de calificación RL por estrellas, simulador interactivo de episodios Q-Learning, exportación en 1 clic a **CSV (Excel)** y **JSON**, desglose fiscal completo (**Proveedor, NIT, Subtotal, IVA 19% y Total**) y modal de **Gráficas CNN & Cumplimiento de Rúbrica**.
 
 ---
 
@@ -32,27 +32,33 @@ El repositorio está organizado en dos módulos principales:
 ```text
 Simulacion-proyecto-11/
 ├── Proyecto/                        # Módulo de Inteligencia Artificial & Entrenamiento
-│   ├── RedesNeuronales_11.ipynb     # Notebook interactivo con todo el flujo de entrenamiento
+│   ├── RedesNeuronales_11.ipynb     # Notebook ejecutado (CNN + Extracción + LLM + RL + Conclusiones)
 │   ├── train_and_evaluate.py        # Script de entrenamiento CNN, validación y test
 │   ├── prepare_dataset.py           # Pipeline de procesamiento y particionado del dataset
 │   ├── generate_extra_plots.py      # Generador de gráficas de convergencia y métricas
-│   ├── build_executed_notebook.py   # Constructor del notebook con celdas ejecutadas
+│   ├── update_notebook_colab.py     # Constructor del notebook con celdas ejecutadas y gráficas
 │   ├── modelo_documentos.keras      # Modelo CNN entrenado (Keras 3)
 │   ├── modelo_documentos.h5         # Modelo CNN en formato HDF5 legacy
-│   ├── dataset.zip                  # Dataset estructurado en clases (9.3 MB)
-│   ├── dataset_original.csv         # Metadatos del dataset original
+│   ├── dataset.zip                  # Dataset estructurado en clases (9.3 MB: train/val/test)
+│   ├── dataset_original.csv         # Metadatos del dataset original en CSV (2,676 documentos)
 │   ├── classes.json / classes.txt   # Mapeo de categorías
 │   ├── training_metrics.json        # Métricas de entrenamiento y test (100% test accuracy)
-│   └── *.png                        # Curvas de pérdida, acierto/error y matriz de confusión
+│   ├── grafica_tasas_acierto_error.png # Gráfica de Tasa de Acierto (>98.5%) y Error (<3.0%)
+│   ├── grafica_perdida.png          # Gráfica de evolución de Loss
+│   ├── matriz_confusion_test.png    # Matriz de confusión sobre los 404 datos nuevos de Test
+│   ├── predicciones_muestras_test.png # Inferencia visual con model.predict
+│   └── grafica_convergencia_rl.png  # Evolución de valores Q(s,a) y recompensa acumulada RL
 │
 ├── Web/                             # Módulo del Sistema Web & Inferencia en Tiempo Real
-│   ├── app.py                       # Servidor Flask, inferencia CNN, OCR y persistencia MySQL
+│   ├── app.py                       # Servidor Flask, inferencia CNN, OCR, Exportación CSV y BD
+│   ├── llm_rl_engine.py             # Motor LLM conectado por Pipeline + Agente RL Q-Learning
 │   ├── templates/
-│   │   └── index.html               # Interfaz moderna (Tailwind CSS, Visor Split-Screen, Filtros)
+│   │   └── index.html               # Interfaz moderna (Tailwind CSS, Visor Split-Screen, Exportación, RL)
 │   ├── company-document-text.csv    # Índice de referencia documental para OCR
 │   ├── requirements.txt             # Dependencias del servidor web
 │   ├── iniciar_servidor_web.bat     # Script de inicio rápido con 1-clic
-│   ├── modelo_documentos.keras      # Modelo de inferencia
+│   ├── modelo_documentos.keras      # Modelo de inferencia Keras
+│   ├── model_weights.npz            # Pesos de la CNN para inferencia NumPy de baja latencia
 │   └── documentos_de_prueba/        # Más de 400 documentos de muestra para pruebas
 │
 ├── .gitignore                       # Filtro de exclusión para Git

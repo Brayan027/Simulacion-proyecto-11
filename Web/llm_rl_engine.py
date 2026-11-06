@@ -650,7 +650,9 @@ class LLMPipelineEngine:
         fecha = datos_extraidos.get('fecha', 'N/A')
         entidad = datos_extraidos.get('entidad', 'N/A')
         nit = datos_extraidos.get('nit', 'N/A')
-        total = datos_extraidos.get('total', 0.0)
+        total = float(datos_extraidos.get('total', 0.0))
+        subtotal = float(datos_extraidos.get('subtotal', round(total / 1.19, 2) if total > 0 else 0.0))
+        iva = float(datos_extraidos.get('iva', round(total - subtotal, 2) if total > 0 else 0.0))
         productos = datos_extraidos.get('productos', [])
 
         resumen_items = "Sin desglose individual de líneas"
@@ -672,8 +674,8 @@ class LLMPipelineEngine:
             f"- Confianza del Modelo CNN: {confianza:.2f}%\n"
             f"- ID / Número: {numero}\n"
             f"- Fecha: {fecha}\n"
-            f"- Razón Social / Entidad: {entidad} (NIT/Código: {nit})\n"
-            f"- Importe Total: ${total:,.2f} USD\n"
+            f"- Proveedor / Razón Social: {entidad} (NIT/Código: {nit})\n"
+            f"- Desglose Fiscal: Subtotal ${subtotal:,.2f} USD + IVA (19%) ${iva:,.2f} USD = Total ${total:,.2f} USD\n"
             f"- Detalle de Ítems ({len(productos)}): {resumen_items}\n\n"
             f"2. POLÍTICA DE DECISIÓN RL ACTIVA:\n"
             f"- Estrategia Seleccionada: {decision_rl['accion_nombre']} (Valor Q esperado: {decision_rl['q_valor_actual']:+.3f})\n"
@@ -1012,9 +1014,19 @@ class LLMPipelineEngine:
                 f"solicitada ('{comentario_usuario.strip()}'), reforzando la verificación específica sobre este documento."
             )
 
+        nota_formato = ""
+        if datos.get('origen_dominio') == 'externo_similar':
+            subtipo = datos.get('subtipo_detectado', tipo_es)
+            nota_formato = (
+                f"[FORMATO EXTERNO RECONOCIDO — SÍ CORRESPONDE A CATEGORÍA ENTRENADA]: Aunque este archivo no pertenece al formato/plantilla "
+                f"original con el que se entrenó el modelo, el análisis híbrido (visual + semántico OCR) determinó que SÍ parece y corresponde "
+                f"a la categoría entrenada «{tipo_es}» ({subtipo}). "
+            )
+
         texto_final = (
             f"📌 [DIAGNÓSTICO IA — {tipo_es.upper()} | POLÍTICA RL: {decision_rl['accion_nombre'].upper()}]: "
-            f"A partir de la clasificación de la Red Neuronal CNN ({confianza:.2f}% de confianza) para el documento {numero} "
+            f"{nota_formato}"
+            f"A partir de la clasificación del sistema ({confianza:.2f}% de confianza) para el documento {numero} "
             f"(Entidad: {entidad} | Fecha: {fecha}), se establece el siguiente plan de acción inteligente: "
             f"{prod_destacado} "
             f"{cuerpo}"
@@ -1024,7 +1036,7 @@ class LLMPipelineEngine:
         return texto_final
 
     def generar_recomendacion(self, documento_id, clase_predicha, tipo_es, confianza, datos_extraidos, rl_agent,
-                              forzar_accion=None, evitar_accion=None, comentario_usuario=""):
+                              forzar_accion=None, evitar_accion=None, comentario_usuario="", modo_lote=False):
         """
         Ejecuta el Pipeline completo:
         [Predicción CNN + Datos OCR] -> [Política del Agente RL] -> [Prompt LLM] -> [Recomendación > 200 caracteres].
@@ -1049,10 +1061,10 @@ class LLMPipelineEngine:
         )
 
         # 3. Ejecutar inferencia del LLM por pipeline (API externa / HF Pipeline / Motor Contextual Instruct)
-        texto_generado = self._llamar_api_externa_si_disponible(prompt)
+        texto_generado = None if modo_lote else self._llamar_api_externa_si_disponible(prompt)
         modelo_usado = getattr(self, 'ultimo_modelo', None) or self.model_name
         if not texto_generado:
-            modelo_usado = self.MODELO_FALLBACK
+            modelo_usado = self.model_name if modo_lote else self.MODELO_FALLBACK
             texto_generado = self._sintetizar_recomendacion_contextual(
                 clase_raw=decision_rl['estado'],
                 tipo_es=tipo_es,
