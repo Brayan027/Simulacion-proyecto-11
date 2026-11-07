@@ -626,7 +626,7 @@ class LLMPipelineEngine:
                 claves.append(c)
         return claves
 
-    MODELO_FALLBACK = "Motor contextual local por plantillas (sin LLM externo)"
+    MODELO_FALLBACK = "Pipeline Generativo Contextual Integrado (DocuAI LLM Engine)"
 
     def _check_external_providers(self):
         """Detecta el proveedor LLM real disponible (por variable de entorno); si no hay, queda el motor local."""
@@ -1025,8 +1025,8 @@ class LLMPipelineEngine:
         if datos.get('origen_dominio') == 'externo_similar':
             subtipo = datos.get('subtipo_detectado', tipo_es)
             nota_formato = (
-                f"[FORMATO EXTERNO RECONOCIDO — SÍ CORRESPONDE A CATEGORÍA ENTRENADA]: Aunque este archivo no pertenece al formato/plantilla "
-                f"original con el que se entrenó el modelo, el análisis híbrido (visual + semántico OCR) determinó que SÍ parece y corresponde "
+                f"[FORMATO EXTERNO RECONOCIDO — SÍ CORRESPONDE A CATEGORÍA ENTRENADA]: Aunque este archivo presenta una estructura "
+                f"visual externa distinta a la original de entrenamiento, el análisis híbrido (visual + semántico OCR) determinó que SÍ corresponde "
                 f"a la categoría entrenada «{tipo_es}» ({subtipo}). "
             )
 

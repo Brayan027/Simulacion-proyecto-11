@@ -1086,7 +1086,7 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
     1) 'entrenado': Pertenece directamente al formato/dataset con el que se entrenó el modelo CNN (Northwind).
     2) 'externo_similar': NO pertenece al formato original de entrenamiento, pero SÍ parece/corresponde a una
        de las 4 categorías entrenadas (Factura Comercial, Orden de Compra, Despacho de Envío o Reporte de Inventario)
-       aunque tenga otro formato/plantilla empresarial.
+       aunque presente un diseño visual externo.
     3) 'separado': NO pertenece al modelo entrenado NI parece ninguna de las categorías entrenadas
        (ej. hojas de vida, certificados, guías académicas, planillas vehiculares, carnets, gráficas, etc.).
     """
@@ -1629,7 +1629,7 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
     t_elapsed = round(time.time() - t_start, 3)
 
     if not es_valido:
-        # Generar dictamen y recomendación dinámicamente con la IA (LLM) — Sin plantillas rígidas
+        # Generar dictamen y recomendación dinámicamente con la IA (LLM)
         dictamen_ia = llm_engine.generar_dictamen_separado(
             nombre_archivo=nombre_limpio,
             subtipo_detectado=info_dom['subtipo_detectado'],
