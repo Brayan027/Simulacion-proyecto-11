@@ -740,7 +740,8 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
         'iva': 0.0,
         'total': 0.0,
         'campos_especificos': {},
-        'productos': []
+        'productos': [],
+        'texto_crudo': texto_extraido
     }
 
     # --- 1. ÓRDENES DE COMPRA (PurchaseOrders) ---
@@ -1636,6 +1637,14 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
             explicacion_dominio=info_dom['explicacion_dominio'],
             rl_agent=rl_agent
         )
+        ia_rectificacion = llm_engine.auditar_y_rectificar(
+            guardado_path=guardado_path,
+            nombre_archivo=nombre_limpio,
+            clase_cnn=clase_cnn,
+            confianza_cnn=0.0,
+            datos_extraidos={},
+            info_dom=info_dom
+        )
         prob_cero = {TRADUCCION_CLASES.get(c, c): 0.0 for c in CLASSES}
         return {
             'success': True,
@@ -1656,6 +1665,7 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
             'tiempo_proceso': t_elapsed,
             'advertencia': info_dom['explicacion_dominio'],
             'probabilidades': prob_cero,
+            'ia_rectificacion': ia_rectificacion,
             'datos_extraidos': {
                 'numero': 'SEPARADO',
                 'fecha': 'N/A',
@@ -1705,7 +1715,17 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
     if info_dom['origen_dominio'] == 'externo_similar':
         campos['campos_especificos']['Origen / Formato'] = f"Formato Externo Reconocido ({info_dom['subtipo_detectado']})"
 
-    # 3. Pipeline Corte 3 Final: Predicción -> Agente RL (Q-Learning) -> LLM Pre-entrenado (> 200 caracteres)
+    # 2.5 Auditoría y Rectificación Inteligente (CNN vs. IA)
+    ia_rectificacion = llm_engine.auditar_y_rectificar(
+        guardado_path=guardado_path,
+        nombre_archivo=nombre_limpio,
+        clase_cnn=clase_cnn,
+        confianza_cnn=confianza_cnn,
+        datos_extraidos=campos,
+        info_dom=info_dom
+    )
+
+    # 3. Pipeline Corte 3 Final: Predicción -> Agente RL (Q-Learning) -> IA Rectificación -> LLM Pre-entrenado (> 200 caracteres)
     llm_res = llm_engine.generar_recomendacion(
         documento_id=None,
         clase_predicha=clase_predicha,
@@ -1713,7 +1733,8 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
         confianza=round(confianza_final, 2),
         datos_extraidos=campos,
         rl_agent=rl_agent,
-        modo_lote=modo_lote
+        modo_lote=modo_lote,
+        ia_rectificacion=ia_rectificacion
     )
 
     t_elapsed = round(time.time() - t_start, 3)
@@ -1735,6 +1756,7 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
         'tiempo_proceso': t_elapsed,
         'probabilidades': probabilidades_raw,
         'datos_extraidos': campos,
+        'ia_rectificacion': ia_rectificacion,
         'llm_recomendacion': llm_res
     }
 
