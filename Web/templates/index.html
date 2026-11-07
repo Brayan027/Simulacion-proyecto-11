@@ -1040,26 +1040,26 @@
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
             <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">1. Evolución de Tasa de Acierto (&gt; 98.5%) y Error (&lt; 3.0%)</h4>
-            <img src="/proyecto_asset/grafica_tasas_acierto_error.png" alt="Tasas de Acierto y Error" class="w-full rounded-lg border border-slate-100">
+            <img src="/proyecto_asset/grafica_tasas_acierto_error.png" alt="Tasas de Acierto y Error" class="w-full rounded-lg border border-slate-100" onerror="this.onerror=null; this.src='/static/grafica_tasas_acierto_error.png';">
           </div>
           <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
             <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">2. Curva de Pérdida (Sparse Categorical Crossentropy Loss)</h4>
-            <img src="/proyecto_asset/grafica_perdida.png" alt="Curva de Pérdida" class="w-full rounded-lg border border-slate-100">
+            <img src="/proyecto_asset/grafica_perdida.png" alt="Curva de Pérdida" class="w-full rounded-lg border border-slate-100" onerror="this.onerror=null; this.src='/static/grafica_perdida.png';">
           </div>
           <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
             <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">3. Matriz de Confusión en Conjunto Test (404 Datos No Vistos)</h4>
-            <img src="/proyecto_asset/matriz_confusion_test.png" alt="Matriz de Confusión" class="w-full max-h-80 object-contain mx-auto rounded-lg border border-slate-100">
+            <img src="/proyecto_asset/matriz_confusion_test.png" alt="Matriz de Confusión" class="w-full max-h-80 object-contain mx-auto rounded-lg border border-slate-100" onerror="this.onerror=null; this.src='/static/matriz_confusion_test.png';">
           </div>
           <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
             <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">4. Convergencia del Agente RL Q-Learning y Recompensa Acumulada</h4>
-            <img src="/proyecto_asset/grafica_convergencia_rl.png" alt="Convergencia RL Q-Learning" class="w-full max-h-80 object-contain mx-auto rounded-lg border border-slate-100" onerror="this.src='/proyecto_asset/predicciones_muestras_test.png'">
+            <img src="/proyecto_asset/grafica_convergencia_rl.png" alt="Convergencia RL Q-Learning" class="w-full max-h-80 object-contain mx-auto rounded-lg border border-slate-100" onerror="this.onerror=null; this.src='/static/grafica_convergencia_rl.png';">
           </div>
         </div>
 
         <!-- Muestra de Inferencia Visual model.predict -->
         <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
           <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">5. Fase de Predicción (model.predict) sobre Documentos No Vistos en Entrenamiento ni Validación</h4>
-          <img src="/proyecto_asset/predicciones_muestras_test.png" alt="Predicciones Muestras Test" class="w-full rounded-lg border border-slate-100">
+          <img src="/proyecto_asset/predicciones_muestras_test.png" alt="Predicciones Muestras Test" class="w-full rounded-lg border border-slate-100" onerror="this.onerror=null; this.src='/static/predicciones_muestras_test.png';">
         </div>
       </div>
     </div>
@@ -1701,8 +1701,14 @@
 
       modalTituloArchivo.textContent = data.nombre_archivo || "Documento";
       modalBadgeTipo.textContent = data.tipo_documento || "Desconocido";
-      modalTiempoBadge.textContent = `${data.tiempo_proceso || data.tiempo_seg || 0.02} seg`;
-      modalConfianzaBadge.textContent = `${Number(data.confianza || 100).toFixed(2)}% Confianza`;
+      if (data.es_valido === false || Number(data.confianza) === 0) {
+        modalConfianzaBadge.className = "text-[11px] font-bold bg-rose-100 text-rose-800 px-2.5 py-0.5 rounded-md";
+        modalConfianzaBadge.textContent = "0.00% (Separado)";
+      } else {
+        const confVal = (data.confianza !== undefined && data.confianza !== null) ? Number(data.confianza) : 100;
+        modalConfianzaBadge.className = "text-[11px] font-bold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-md";
+        modalConfianzaBadge.textContent = `${confVal.toFixed(2)}% Confianza`;
+      }
 
       const urlVista = data.url_vista || data.url_archivo || `/uploads/${data.nombre_archivo}`;
       const urlArchivo = data.url_archivo || `/uploads/${data.nombre_archivo}`;

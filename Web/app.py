@@ -1089,9 +1089,9 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
         if any(t in txt or t in name_low for t in terminos):
             explicacion = (
                 f"El archivo «{nombre_archivo}» NO pertenece a los documentos con los que se entrenó el modelo y "
-                f"NO parece ninguna de las 4 categorías entrenadas (se identificó como «{etiqueta_exclusion}»; "
-                f"la red neuronal tuvo una activación visual superficial de {confianza_cnn:.1f}% hacia «{tipo_cnn_es}», "
-                f"pero su estructura y contenido no corresponden a Facturas, Órdenes de Compra, Despachos ni Inventarios)."
+                f"NO corresponde a ninguna de las 4 categorías entrenadas (identificado como «{etiqueta_exclusion}»). "
+                f"El documento presenta 0.0% de coincidencia con Facturas Comerciales, Órdenes de Compra, "
+                f"Comprobantes de Despacho o Reportes de Inventario, por lo que fue clasificado como Fuera de Dominio y separado del lote."
             )
             return {
                 'es_valido': False,
@@ -1257,9 +1257,9 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
 
         conf_sim = round(min(99.2, max(88.5, 82.0 + max_score * 1.6)), 2)
         nota_cnn = (
-            f"coincidiendo con la predicción visual de la CNN («{tipo_cnn_es}»)"
+            f"coincidiendo con la predicción visual («{tipo_cnn_es}»)"
             if mejor_clase_sem == clase_cnn_norm else
-            f"corrigiendo la activación visual pura de la CNN («{tipo_cnn_es}» {confianza_cnn:.1f}%) gracias al análisis semántico-estructural OCR"
+            f"corrigiendo la clasificación visual («{tipo_cnn_es}») mediante análisis semántico-estructural OCR"
         )
         explicacion = (
             f"El archivo «{nombre_archivo}» NO pertenece al formato original con el que se entrenó el modelo, "
@@ -1281,8 +1281,8 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
     explicacion = (
         f"El archivo «{nombre_archivo}» NO pertenece a los documentos con los que se entrenó el modelo y "
         f"NO parece ninguna de las 4 categorías entrenadas (Factura Comercial, Orden de Compra, Comprobante de Despacho "
-        f"ni Reporte de Inventario). Aunque la CNN asignó un {confianza_cnn:.1f}% visual a «{tipo_cnn_es}», el documento carece "
-        f"de estructura transaccional, fiscal o logística válida, por lo que fue separado del lote."
+        f"ni Reporte de Inventario). El documento carece por completo de estructura transaccional, fiscal o logística válida "
+        f"(coincidencia con el modelo: 0.0%), por lo que fue separado del lote."
     )
     return {
         'es_valido': False,
@@ -1607,6 +1607,7 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
             f"El sistema ha separado automáticamente este archivo de la pila de documentos válidos y bloqueó su inserción "
             f"en las tablas contables de MySQL para evitar falsos positivos en producción."
         )
+        prob_cero = {TRADUCCION_CLASES.get(c, c): 0.0 for c in CLASSES}
         return {
             'success': True,
             'es_valido': False,
@@ -1615,8 +1616,8 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
             'origen_dominio': 'separado',
             'subtipo_detectado': info_dom['subtipo_detectado'],
             'explicacion_dominio': info_dom['explicacion_dominio'],
-            'clase_cnn_original': TRADUCCION_CLASES.get(clase_cnn, clase_cnn),
-            'confianza_cnn_original': round(confianza_cnn, 2),
+            'clase_cnn_original': 'Fuera de Dominio (Sin coincidencia)',
+            'confianza_cnn_original': 0.0,
             'nombre_archivo': nombre_limpio,
             'url_vista': url_vista,
             'url_archivo': url_archivo,
@@ -1625,7 +1626,7 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
             'confianza': 0.0,
             'tiempo_proceso': t_elapsed,
             'advertencia': info_dom['explicacion_dominio'],
-            'probabilidades': probabilidades_raw,
+            'probabilidades': prob_cero,
             'datos_extraidos': {
                 'numero': 'SEPARADO',
                 'fecha': 'N/A',
@@ -1637,9 +1638,9 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
                 'campos_especificos': {
                     'Estado en el Lote': 'Separado (No pertenece al modelo)',
                     'Tipo Detectado': info_dom['subtipo_detectado'],
-                    ' ¿Pertenece al Entrenamiento?': 'No (Formato y contenido ajenos)',
+                    '¿Pertenece al Entrenamiento?': 'No (Formato y contenido ajenos)',
                     '¿Parece Categoría Entrenada?': 'No (Descartado por análisis semántico)',
-                    'Activación Visual CNN': f"{TRADUCCION_CLASES.get(clase_cnn, clase_cnn)} ({confianza_cnn:.1f}%)"
+                    'Concordancia con el Modelo': '0.0% (Fuera de Dominio)'
                 },
                 'productos': []
             },
@@ -1804,11 +1805,9 @@ def generar_diagnostico_lote_ia(resultados):
     for r in separados:
         nom = r.get('nombre_archivo', 'Archivo')
         sub = r.get('subtipo_detectado', 'Documento ajeno al dominio')
-        cnn_orig = r.get('clase_cnn_original', 'N/A')
-        conf_orig = r.get('confianza_cnn_original', 0.0)
         desc = (
             f"No pertenece a los documentos con los que se entrenó el modelo y NO parece ninguna de las 4 categorías "
-            f"entrenadas (identificado como «{sub}»; activación visual CNN descartada: {conf_orig:.1f}% en {cnn_orig}). "
+            f"entrenadas (identificado como «{sub}»; coincidencia con el modelo: 0.0%). "
             f"Separado del lote."
         )
         lineas_separados.append(f"• {nom}: {desc}")
@@ -2536,9 +2535,14 @@ def api_llm_regenerar():
 
 @app.route('/proyecto_asset/<path:filename>')
 def proyecto_asset(filename):
-    """Sirve gráficas de entrenamiento y recursos del módulo Proyecto/."""
+    """Sirve gráficas de entrenamiento y recursos del módulo Proyecto/ o Web/static/."""
     proy_dir = os.path.abspath(os.path.join(BASE_DIR, '..', 'Proyecto'))
-    return send_from_directory(proy_dir, filename)
+    if os.path.exists(os.path.join(proy_dir, filename)):
+        return send_from_directory(proy_dir, filename)
+    static_dir = os.path.abspath(os.path.join(BASE_DIR, 'static'))
+    if os.path.exists(os.path.join(static_dir, filename)):
+        return send_from_directory(static_dir, filename)
+    return send_from_directory(BASE_DIR, filename)
 
 
 @app.route('/api/metricas_modelo', methods=['GET'])
