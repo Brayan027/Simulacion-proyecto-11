@@ -31,11 +31,17 @@ import pymysql
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
-app = Flask(__name__, template_folder=os.path.join(BASE_DIR, 'templates'))
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, 'templates'),
+    static_folder=os.path.join(BASE_DIR, 'static'),
+    static_url_path='/static'
+)
 app.config['UPLOAD_FOLDER'] = os.path.join(BASE_DIR, 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = None
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(os.path.join(BASE_DIR, 'static'), exist_ok=True)
 DB_PATH = os.path.join(BASE_DIR, 'documentos.db')
 
 # Formatos documentales e imágenes soportados en producción
@@ -1554,7 +1560,7 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
             }
         }
 
-    url_archivo = f"/uploads/{nombre_limpio}"
+    url_archivo = f"uploads/{nombre_limpio}"
     
     if nombre_limpio.lower().endswith('.pdf'):
         try:
@@ -1566,13 +1572,13 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
             pix.save(preview_path)
             doc.close()
             img_pil = Image.open(preview_path).convert('RGB')
-            url_vista = f"/uploads/{preview_img_name}"
+            url_vista = f"uploads/{preview_img_name}"
         except Exception as e:
             return {'error': f'Error procesando PDF: {str(e)}', 'success': False}
     else:
         try:
             img_pil = Image.open(guardado_path).convert('RGB')
-            url_vista = f"/uploads/{nombre_limpio}"
+            url_vista = f"uploads/{nombre_limpio}"
         except Exception as e:
             return {'error': f'Error abriendo imagen: {str(e)}', 'success': False}
 
@@ -1602,10 +1608,12 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
     t_elapsed = round(time.time() - t_start, 3)
 
     if not es_valido:
-        texto_rechazo_llm = (
-            f"📌 [DIAGNÓSTICO IA — ARCHIVO SEPARADO / FUERA DEL MODELO ENTRENADO]: {info_dom['explicacion_dominio']} "
-            f"El sistema ha separado automáticamente este archivo de la pila de documentos válidos y bloqueó su inserción "
-            f"en las tablas contables de MySQL para evitar falsos positivos en producción."
+        # Generar dictamen y recomendación dinámicamente con la IA (LLM) — Sin plantillas rígidas
+        dictamen_ia = llm_engine.generar_dictamen_separado(
+            nombre_archivo=nombre_limpio,
+            subtipo_detectado=info_dom['subtipo_detectado'],
+            explicacion_dominio=info_dom['explicacion_dominio'],
+            rl_agent=rl_agent
         )
         prob_cero = {TRADUCCION_CLASES.get(c, c): 0.0 for c in CLASSES}
         return {
@@ -1645,21 +1653,14 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
                 'productos': []
             },
             'llm_recomendacion': {
-                'modelo_llm': llm_engine.model_name,
-                'pipeline_tipo': 'Barrera de Dominio -> Separación Automática IA',
-                'texto': texto_rechazo_llm,
-                'longitud_caracteres': len(texto_rechazo_llm),
-                'cumple_minimo_200': True,
-                'tiempo_generacion_seg': 0.005,
-                'prompt_entrada': f"[VALIDACIÓN DE DOMINIO Y SIMILITUD]: {info_dom['explicacion_dominio']}",
-                'rl_decision': {
-                    'estado': 'Fuera de Dominio',
-                    'estado_es': 'Separado del Lote',
-                    'accion_id': 'control_interno_riesgos',
-                    'accion_nombre': 'Separación de Archivos No Pertenecientes al Modelo',
-                    'q_valor_actual': 1.0,
-                    'modo_seleccion': 'Política de Seguridad Documental'
-                }
+                'modelo_llm': dictamen_ia['modelo_llm'],
+                'pipeline_tipo': dictamen_ia['pipeline_tipo'],
+                'texto': dictamen_ia['texto'],
+                'longitud_caracteres': dictamen_ia['longitud_caracteres'],
+                'cumple_minimo_200': dictamen_ia['cumple_minimo_200'],
+                'tiempo_generacion_seg': dictamen_ia['tiempo_generacion_seg'],
+                'prompt_entrada': dictamen_ia['prompt_entrada'],
+                'rl_decision': dictamen_ia['rl_decision']
             }
         }
 
