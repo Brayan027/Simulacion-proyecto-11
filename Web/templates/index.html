@@ -2668,9 +2668,11 @@
 
     // Inicializar
     seleccionarEstrellas('main', 5);
-    cargarStats();
-    cargarRLStats();
-    cargarHistorial();
+    (async () => {
+      await cargarStats();
+      await cargarRLStats();
+      await cargarHistorial();
+    })();
 
     setInterval(() => {
       fetch('api/stats').catch(() => {});

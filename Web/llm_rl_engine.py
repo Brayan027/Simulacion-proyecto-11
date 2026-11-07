@@ -163,7 +163,8 @@ class RLRecommendationAgent:
         except Exception as e:
             print("Aviso inicializando tablas RL en SQLite:", e)
 
-        if self.get_mysql_connection:
+        _RL_MYSQL_INIT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.mysql_rl_initialized')
+        if self.get_mysql_connection and not os.path.exists(_RL_MYSQL_INIT):
             conn_my = self.get_mysql_connection()
             if conn_my:
                 try:
@@ -213,6 +214,11 @@ class RLRecommendationAgent:
                             ) ENGINE=InnoDB;
                         ''')
                     conn_my.close()
+                    try:
+                        with open(_RL_MYSQL_INIT, 'w') as f:
+                            f.write('1')
+                    except Exception:
+                        pass
                 except Exception as e:
                     print("Aviso inicializando tablas RL en MySQL:", e)
 

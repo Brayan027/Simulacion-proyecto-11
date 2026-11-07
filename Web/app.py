@@ -95,8 +95,12 @@ def get_mysql_connection():
         print(f"⚠️ MySQL remoto no disponible ({MYSQL_DB}), operando con respaldo local SQLite activo:", e)
         return None
 
+_MYSQL_INIT_FILE = os.path.join(BASE_DIR, '.mysql_initialized')
+
 def init_mysql():
     global _mysql_disabled_until
+    if os.path.exists(_MYSQL_INIT_FILE):
+        return
     try:
         target_host = resolve_mysql_host(MYSQL_HOST)
         conn = pymysql.connect(
@@ -219,6 +223,11 @@ def init_mysql():
 
         cur.close()
         conn.close()
+        try:
+            with open(_MYSQL_INIT_FILE, 'w') as f:
+                f.write('1')
+        except Exception:
+            pass
         print(f"✅ Base de Datos MySQL '{MYSQL_DB}' y tablas especializadas inicializadas exitosamente.")
     except Exception as e:
         _mysql_disabled_until = time.time() + 120.0
@@ -424,21 +433,27 @@ NPZ_PATH = os.path.join(BASE_DIR, 'model_weights.npz')
 if not os.path.exists(NPZ_PATH):
     NPZ_PATH = 'model_weights.npz'
 
-if os.path.exists(NPZ_PATH):
-    print(f"[*] Cargando modelo NumPy ultra-rápido desde {NPZ_PATH}...")
-    model = NumpyCNNModel(NPZ_PATH)
-    print("✅ Modelo CNN NumPy cargado exitosamente.")
-elif tf is not None:
-    MODEL_PATH = os.path.join(BASE_DIR, 'modelo_documentos.keras')
-    if not os.path.exists(MODEL_PATH):
-        MODEL_PATH = os.path.join(BASE_DIR, 'modelo_documentos.h5')
-    if not os.path.exists(MODEL_PATH):
-        MODEL_PATH = 'modelo_documentos.keras'
-    print(f"[*] Cargando modelo CNN desde {MODEL_PATH}...")
-    model = tf.keras.models.load_model(MODEL_PATH)
-    print("✅ Modelo Keras cargado exitosamente.")
-else:
-    raise RuntimeError("No se encontró ni model_weights.npz ni TensorFlow disponible para cargar el modelo.")
+_MODEL_INSTANCE = None
+
+def get_model():
+    global _MODEL_INSTANCE
+    if _MODEL_INSTANCE is None:
+        if os.path.exists(NPZ_PATH):
+            print(f"[*] Cargando modelo NumPy ultra-rápido desde {NPZ_PATH}...")
+            _MODEL_INSTANCE = NumpyCNNModel(NPZ_PATH)
+            print("✅ Modelo CNN NumPy cargado exitosamente.")
+        elif tf is not None:
+            MODEL_PATH = os.path.join(BASE_DIR, 'modelo_documentos.keras')
+            if not os.path.exists(MODEL_PATH):
+                MODEL_PATH = os.path.join(BASE_DIR, 'modelo_documentos.h5')
+            if not os.path.exists(MODEL_PATH):
+                MODEL_PATH = 'modelo_documentos.keras'
+            print(f"[*] Cargando modelo CNN desde {MODEL_PATH}...")
+            _MODEL_INSTANCE = tf.keras.models.load_model(MODEL_PATH)
+            print("✅ Modelo Keras cargado exitosamente.")
+        else:
+            raise RuntimeError("No se encontró ni model_weights.npz ni TensorFlow disponible para cargar el modelo.")
+    return _MODEL_INSTANCE
 
 # Clases del modelo
 CLASSES = ['Inventory Report', 'PurchaseOrders', 'Shipping orders', 'invoices']
@@ -449,24 +464,30 @@ TRADUCCION_CLASES = {
     'Inventory Report': 'Reporte de Inventario'
 }
 
-# 3. Cargar Ground Truth del Dataset si está disponible para enriquecimiento
-DATASET_LOOKUP = {}
-for possible_csv in [os.path.join(BASE_DIR, 'company-document-text.csv'), 'company-document-text.csv', r'C:\Users\acer\Desktop\Proyecto\dataset_raw\company-document-text.csv']:
-    if os.path.exists(possible_csv):
-        try:
-            with open(possible_csv, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    txt = row.get('text', '')
-                    lbl = row.get('label', '').lower()
-                    m_id = re.search(r'(\d{5})', txt)
-                    if m_id:
-                        doc_id = m_id.group(1)
-                        DATASET_LOOKUP[(lbl, doc_id)] = txt
-            print(f"✅ Índice de dataset cargado con {len(DATASET_LOOKUP)} registros de referencia.")
-            break
-        except Exception as e:
-            print("Aviso al cargar CSV de referencia:", e)
+# 3. Cargar Ground Truth del Dataset de forma bajo demanda (Lazy Loading)
+_DATASET_LOOKUP = None
+
+def get_dataset_lookup():
+    global _DATASET_LOOKUP
+    if _DATASET_LOOKUP is None:
+        _DATASET_LOOKUP = {}
+        for possible_csv in [os.path.join(BASE_DIR, 'company-document-text.csv'), 'company-document-text.csv', r'C:\Users\acer\Desktop\Proyecto\dataset_raw\company-document-text.csv']:
+            if os.path.exists(possible_csv):
+                try:
+                    with open(possible_csv, 'r', encoding='utf-8') as f:
+                        reader = csv.DictReader(f)
+                        for row in reader:
+                            txt = row.get('text', '')
+                            lbl = row.get('label', '').lower()
+                            m_id = re.search(r'(\d{5})', txt)
+                            if m_id:
+                                doc_id = m_id.group(1)
+                                _DATASET_LOOKUP[(lbl, doc_id)] = txt
+                    print(f"✅ Índice de dataset cargado con {len(_DATASET_LOOKUP)} registros de referencia.")
+                    break
+                except Exception as e:
+                    print("Aviso al cargar CSV de referencia:", e)
+    return _DATASET_LOOKUP
 
 # 4. Extracción de Texto mediante PyMuPDF (PDF) y WinOCR (Imágenes/Escaneos con soporte multi-orientación)
 _OCR_CACHE = {}
@@ -704,7 +725,7 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
     
     gt_text = ""
     if doc_id:
-        for k, v in DATASET_LOOKUP.items():
+        for k, v in get_dataset_lookup().items():
             if gt_key in k[0] and k[1] == doc_id:
                 gt_text = v
                 break
@@ -1586,7 +1607,7 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
     img_array = np.array(img_resized, dtype=np.float32)
     img_batch = np.expand_dims(img_array, axis=0)
 
-    prediccion = model.predict(img_batch, verbose=0)
+    prediccion = get_model().predict(img_batch, verbose=0)
     idx_pred = int(np.argmax(prediccion[0]))
     clase_cnn = CLASSES[idx_pred]
     confianza_cnn = float(prediccion[0][idx_pred]) * 100
@@ -2006,25 +2027,26 @@ def get_stats():
     if conn_my:
         try:
             with conn_my.cursor() as cur:
-                cur.execute("SELECT COUNT(*) AS c FROM documentos_procesados;")
-                total_db = cur.fetchone()['c']
-
-                cur.execute("SELECT COUNT(*) AS c FROM facturas;")
-                facturas_db = cur.fetchone()['c']
-
-                cur.execute("SELECT COUNT(*) AS c FROM ordenes_compra;")
-                ordenes_db = cur.fetchone()['c']
-
-                cur.execute("SELECT COUNT(*) AS c FROM despachos_envio;")
-                despachos_db = cur.fetchone()['c']
-
-                cur.execute("SELECT COUNT(*) AS c FROM reportes_inventario;")
-                inventarios_db = cur.fetchone()['c']
-
-                cur.execute("SELECT AVG(confianza) AS c, AVG(tiempo_seg) AS t FROM documentos_procesados;")
+                cur.execute("""
+                    SELECT 
+                        (SELECT COUNT(*) FROM documentos_procesados) AS total_db,
+                        (SELECT COUNT(*) FROM facturas) AS facturas_db,
+                        (SELECT COUNT(*) FROM ordenes_compra) AS ordenes_db,
+                        (SELECT COUNT(*) FROM despachos_envio) AS despachos_db,
+                        (SELECT COUNT(*) FROM reportes_inventario) AS inventarios_db,
+                        AVG(confianza) AS avg_conf,
+                        AVG(tiempo_seg) AS avg_tiempo
+                    FROM documentos_procesados;
+                """)
                 row = cur.fetchone()
-                if row and row['c'] is not None: avg_conf = float(row['c'])
-                if row and row['t'] is not None: avg_tiempo_seg = float(row['t'])
+                if row:
+                    total_db = row.get('total_db') or 0
+                    facturas_db = row.get('facturas_db') or 0
+                    ordenes_db = row.get('ordenes_db') or 0
+                    despachos_db = row.get('despachos_db') or 0
+                    inventarios_db = row.get('inventarios_db') or 0
+                    if row.get('avg_conf') is not None: avg_conf = float(row['avg_conf'])
+                    if row.get('avg_tiempo') is not None: avg_tiempo_seg = float(row['avg_tiempo'])
             conn_my.close()
         except Exception as e:
             print("Error stats MySQL:", e)
