@@ -295,7 +295,8 @@ def sincronizar_recomendaciones_existentes():
                     tipo_es=tipo_doc,
                     confianza=float(conf or 100.0),
                     datos_extraidos=datos_ext,
-                    rl_agent=rl_agent
+                    rl_agent=rl_agent,
+                    modo_lote=True
                 )
                 det['llm_recomendacion'] = rec
                 det['datos_extraidos'] = datos_ext
@@ -333,7 +334,8 @@ def sincronizar_recomendaciones_existentes():
                                 tipo_es=m_tipo,
                                 confianza=m_conf,
                                 datos_extraidos=datos_ext,
-                                rl_agent=rl_agent
+                                rl_agent=rl_agent,
+                                modo_lote=True
                             )
                             m_det['llm_recomendacion'] = rec
                             cur_my.execute("UPDATE documentos_procesados SET detalles_json = %s WHERE id = %s;", (json.dumps(m_det, ensure_ascii=False), m_id))
