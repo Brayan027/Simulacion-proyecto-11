@@ -358,16 +358,8 @@ def sincronizar_recomendaciones_existentes():
             except Exception as e:
                 print("Aviso enriqueciendo MySQL con LLM:", e)
 
-        # Sembrar episodios iniciales de Feedback RL si el historial está vacío
-        if fb_count == 0:
-            semillas = [
-                (1, 'invoice_10250.pdf', 'invoices', 'auditoria_contable', 5, 'Excelente recomendación tributaria y contable sobre el NIT y subtotal.'),
-                (6, 'order_10262.jpg', 'Shipping orders', 'operaciones_logistica', 5, 'Muy acertado el control de guía de despacho y verificación de transporte.'),
-                (7, 'invoice_10518.jpg', 'invoices', 'financiero_tesoreria', 4, 'Buen análisis de liquidez y seguimiento de cobro de factura.'),
-                (8, 'StockReport_2016-08.jpg', 'Inventory Report', 'operaciones_logistica', 5, 'Identificó correctamente las referencias para reabastecimiento de stock.')
-            ]
-            for d_id, arch, est, acc, stars, com in semillas:
-                rl_agent.registrar_feedback(d_id, arch, est, acc, stars, com)
+        # No sembrar episodios falsos: los feedbacks provienen exclusivamente del usuario real
+        pass
     except Exception as e:
         print("Aviso sincronizando recomendaciones iniciales:", e)
 
@@ -811,7 +803,7 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
 
         datos['proveedor'] = datos['entidad']
         if datos['subtotal'] <= 0 and datos['total'] > 0:
-            datos['subtotal'] = round(datos['total'] / 1.19, 2)
+            datos['subtotal'] = datos['total']
             datos['iva'] = round(datos['total'] - datos['subtotal'], 2)
 
         datos['campos_especificos'] = {
@@ -821,7 +813,7 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
             'NIT / Código': datos['nit'],
             'Cant. Productos': f"{len(datos['productos']) or 1} item(s)",
             'Subtotal ($)': f"$ {datos['subtotal']:,.2f}",
-            'IVA (19%)': f"$ {datos['iva']:,.2f}",
+            'Impuestos/Cargos': f"$ {datos['iva']:,.2f}",
             'Total Liquidado ($)': f"$ {datos['total']:,.2f}"
         }
 
@@ -896,7 +888,7 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
                 val_s = m_tot_str.group(1).strip().replace(' ', '.')
                 ps = val_s.split('.')
                 datos['total'] = float(ps[0] + '.' + ps[1]) if len(ps) > 1 else float(val_s)
-            datos['subtotal'] = round(datos['total'] / 1.19, 2) if datos['total'] > 0 else 0.0
+            datos['subtotal'] = datos['total'] if datos['total'] > 0 else 0.0
             datos['iva'] = round(datos['total'] - datos['subtotal'], 2) if datos['total'] > 0 else 0.0
         else:
             univ = extraer_campos_universales_ocr(texto_extraido, nombre_archivo, clase_key)
@@ -921,7 +913,7 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
             'Proveedor / Razón Social': datos['entidad'],
             'ID de Cliente (NIT)': datos['nit'],
             'Subtotal ($)': f"$ {datos['subtotal']:,.2f}",
-            'IVA (19%)': f"$ {datos['iva']:,.2f}",
+            'Impuestos/Cargos': f"$ {datos['iva']:,.2f}",
             'Total Factura ($)': f"$ {datos['total']:,.2f}",
             'Dirección de Facturación': direccion_str,
             'Cant. Items Facturados': f"{len(datos['productos'])} item(s)"
@@ -1165,7 +1157,7 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
     ]
     es_formato_entrenado = any(re.search(p, txt, re.DOTALL) for p in PATRONES_ENTRENAMIENTO)
     if not es_formato_entrenado:
-        if re.match(r'^(invoice_\d{5}|order_\d{5}|purchase_?orders?_\d{5}|shipping_?orders?_\d{5}|stockreport_\d{4}-\d{2})', name_low):
+        if re.match(r'^(invoice_\d{5}|purchase_?orders?_\d{5}|shipping_?orders?_\d{5}|stockreport_\d{4}-\d{2})', name_low):
             es_formato_entrenado = True
 
     if es_formato_entrenado:
@@ -2423,7 +2415,7 @@ def api_rl_feedback():
     forzar_regeneracion = bool(data.get('regenerar', False))
     accion_preferida = data.get('accion_preferida')
 
-    # 1. Ejecutar actualización de Aprendizaje por Refuerzo (Bellman / Q-Learning)
+    # 1. Ejecutar actualización de Aprendizaje por Refuerzo (Bandido Contextual (Q-Learning TD))
     resultado_rl = rl_agent.registrar_feedback(
         documento_id=doc_id,
         nombre_archivo=nombre_archivo,
@@ -2663,7 +2655,7 @@ def api_exportar_csv():
             rl_dec = llm_rec.get('rl_decision', {})
 
             tot_val = float(c.get('total') if c.get('total') is not None else (r['total'] or 0.0))
-            sub_val = float(c.get('subtotal') if c.get('subtotal') is not None else (round(tot_val / 1.19, 2) if tot_val > 0 else 0.0))
+            sub_val = float(c.get('subtotal') if c.get('subtotal') is not None else (tot_val if tot_val > 0 else 0.0))
             iva_val = float(c.get('iva') if c.get('iva') is not None else (round(tot_val - sub_val, 2) if tot_val > 0 else 0.0))
 
             registros.append({
@@ -2676,7 +2668,7 @@ def api_exportar_csv():
                 'Proveedor_Entidad': c.get('entidad') or r['entidad'] or 'N/A',
                 'NIT_Codigo': c.get('nit') or r['nit'] or 'N/A',
                 'Subtotal_USD': f"{sub_val:.2f}",
-                'IVA_19_%_USD': f"{iva_val:.2f}",
+                'Impuestos_USD': f"{iva_val:.2f}",
                 'Total_USD': f"{tot_val:.2f}",
                 'Items_Detectados': len(c.get('productos', [])),
                 'Politica_RL_Activa': rl_dec.get('accion_nombre', 'Auditoría Contable'),
@@ -2695,7 +2687,7 @@ def api_exportar_csv():
     fieldnames = [
         'ID', 'Archivo', 'Tipo_Documento', 'Confianza_CNN_%', 'Numero_Documento',
         'Fecha_Emision', 'Proveedor_Entidad', 'NIT_Codigo', 'Subtotal_USD',
-        'IVA_19_%_USD', 'Total_USD', 'Items_Detectados', 'Politica_RL_Activa',
+        'Impuestos_USD', 'Total_USD', 'Items_Detectados', 'Politica_RL_Activa',
         'Valor_Q_RL', 'Modelo_LLM', 'Caracteres_LLM', 'Recomendacion_LLM', 'Fecha_Procesamiento'
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames)

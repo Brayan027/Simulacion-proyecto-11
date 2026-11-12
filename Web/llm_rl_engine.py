@@ -58,7 +58,7 @@ ACCIONES_RL = {
 LISTA_ACCIONES = list(ACCIONES_RL.keys())
 
 # Valores Q(s, a) iniciales informados por dominio (dan prioridad inicial lógica según el tipo de documento,
-# pero se adaptan dinámicamente con el Feedback del usuario mediante la ecuación de Bellman / Q-Learning)
+# pero se adaptan dinámicamente con el Feedback del usuario mediante la Bandido Contextual / Q-Learning (sin estados secuenciales))
 Q_INIT_PRIOR = {
     'invoices': {
         'auditoria_contable': 0.72,
@@ -336,7 +336,7 @@ class RLRecommendationAgent:
 
     def registrar_feedback(self, documento_id, nombre_archivo, clase_raw, accion_id, calificacion_estrellas, comentario="", texto_recomendacion=""):
         """
-        Ejecuta el paso de aprendizaje por refuerzo (Bellman / Q-Learning Update)
+        Ejecuta el paso de aprendizaje por refuerzo (Bandido Contextual (Q-Learning TD) Update)
         a partir del Feedback humano del usuario y persiste el aprendizaje en BD.
         """
         s = self.normalize_state(clase_raw)
@@ -440,9 +440,9 @@ class RLRecommendationAgent:
     def obtener_estadisticas_rl(self):
         """Retorna métricas consolidadas, matriz Q(s,a), política óptima e historial de episodios."""
         total_episodios = 0
-        promedio_estrellas = 4.8
-        recompensa_promedio = 0.78
-        tasa_aceptacion = 95.0
+        promedio_estrellas = 0.0
+        recompensa_promedio = 0.0
+        tasa_aceptacion = 0.0
         historial_reciente = []
 
         try:
@@ -717,7 +717,7 @@ class LLMPipelineEngine:
         if 'factura' in str(campos_esp).lower(): scores['invoices'] += 2.0
 
         # Evidencias Órdenes de Compra
-        if re.search(r'\bpurchase\s*orders?\b', txt) or 'purchase' in name_low or 'order_' in name_low: scores['PurchaseOrders'] += 5.0
+        if re.search(r'\bpurchase\s*orders?\b', txt) or 'purchase' in name_low: scores['PurchaseOrders'] += 5.0
         if re.search(r'\borden(es)?\s*de\s*compra\b', txt) or 'orden' in name_low: scores['PurchaseOrders'] += 5.0
         if re.search(r'\b(buyer|comprador|requisition|p\.o\.|po\s*#)\b', txt): scores['PurchaseOrders'] += 3.5
         if 'orden' in str(campos_esp).lower() or 'comprador' in str(campos_esp).lower(): scores['PurchaseOrders'] += 2.0
@@ -817,8 +817,8 @@ class LLMPipelineEngine:
         entidad = datos_extraidos.get('entidad', 'N/A')
         nit = datos_extraidos.get('nit', 'N/A')
         total = float(datos_extraidos.get('total', 0.0))
-        subtotal = float(datos_extraidos.get('subtotal', round(total / 1.19, 2) if total > 0 else 0.0))
-        iva = float(datos_extraidos.get('iva', round(total - subtotal, 2) if total > 0 else 0.0))
+        subtotal = float(datos_extraidos.get('subtotal', total))
+        iva = float(datos_extraidos.get('iva', 0.0))
         productos = datos_extraidos.get('productos', [])
 
         resumen_items = "Sin desglose individual de líneas"
@@ -851,7 +851,7 @@ class LLMPipelineEngine:
             f"- ID / Número: {numero}\n"
             f"- Fecha: {fecha}\n"
             f"- Proveedor / Razón Social: {entidad} (NIT/Código: {nit})\n"
-            f"- Desglose Fiscal: Subtotal ${subtotal:,.2f} USD + IVA (19%) ${iva:,.2f} USD = Total ${total:,.2f} USD\n"
+            f"- Desglose Fiscal: Subtotal ${subtotal:,.2f} USD + Impuestos/Cargos ${iva:,.2f} USD = Total ${total:,.2f} USD\n"
             f"- Detalle de Ítems ({len(productos)}): {resumen_items}\n\n"
             f"2. POLÍTICA DE DECISIÓN RL ACTIVA:\n"
             f"- Estrategia Seleccionada: {decision_rl['accion_nombre']} (Valor Q esperado: {decision_rl['q_valor_actual']:+.3f})\n"

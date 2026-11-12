@@ -761,7 +761,7 @@
               <i data-lucide="table-2" class="w-4 h-4 text-indigo-600"></i>
               Matriz de Valores Q(Estado, Acción)
             </h3>
-            <span class="text-[10px] text-slate-400 mono">Ecuación de Bellman</span>
+            <span class="text-[10px] text-slate-400 mono">Bandido Contextual (Q-Learning TD)</span>
           </div>
 
           <div class="overflow-x-auto rounded-xl border border-slate-200">
@@ -1680,7 +1680,7 @@
         'Orden', 'Archivo', 'Estado_en_Lote', 'Pertenece_Formato_Entrenado',
         'Parece_Categoria_Entrenada', 'Categoria_Clasificada', 'Subtipo_Detectado',
         'Confianza_%', 'Numero_Documento', 'Fecha', 'Proveedor_Entidad', 'NIT',
-        'Subtotal_USD', 'IVA_19_%', 'Total_USD', 'Diagnostico_Dominio_IA'
+        'Subtotal_USD', 'Impuestos_USD', 'Total_USD', 'Diagnostico_Dominio_IA'
       ];
       const esc = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
       const rows = [headers.map(esc).join(',')];
@@ -2792,12 +2792,12 @@
       const llm = targetData.llm_recomendacion || (targetData.detalles && targetData.detalles.llm_recomendacion) || {};
       const rlDec = llm.rl_decision || {};
       const tot = Number(c.total || targetData.total || 0);
-      const sub = Number(c.subtotal !== undefined ? c.subtotal : (tot > 0 ? (tot / 1.19) : 0));
+      const sub = Number(c.subtotal !== undefined ? c.subtotal : (tot > 0 ? (tot) : 0));
       const iva = Number(c.iva !== undefined ? c.iva : (tot > 0 ? (tot - sub) : 0));
 
       const headers = [
         "Archivo", "Tipo_Documento", "Confianza_CNN_%", "Numero_Documento", "Fecha",
-        "Proveedor_Razón_Social", "NIT_Codigo", "Subtotal_USD", "IVA_19_%_USD", "Total_USD",
+        "Proveedor_Razón_Social", "NIT_Codigo", "Subtotal_USD", "Impuestos_USD", "Total_USD",
         "Politica_RL", "Valor_Q", "Modelo_LLM", "Caracteres_LLM", "Recomendacion_LLM"
       ];
       const row = [

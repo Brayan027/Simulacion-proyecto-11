@@ -9,13 +9,13 @@ def generar_grafica_convergencia_rl(ruta_salida):
     import numpy as np
 
     episodios = np.arange(0, 13)
-    # Evolución de Q(invoices, a) durante 12 episodios de feedback humano (RLHF)
-    q_auditoria = [0.720, 0.790, 0.843, 0.882, 0.637, 0.452, 0.452, 0.452, 0.452, 0.452, 0.589, 0.692, 0.769]
-    q_financiero = [0.650, 0.650, 0.650, 0.650, 0.650, 0.650, 0.738, 0.803, 0.852, 0.889, 0.889, 0.889, 0.889]
-    q_control = [0.600, 0.600, 0.600, 0.638, 0.638, 0.638, 0.638, 0.638, 0.675, 0.675, 0.720, 0.720, 0.720]
-    q_logistica = [0.450, 0.450, 0.450, 0.450, 0.450, 0.450, 0.450, 0.480, 0.480, 0.480, 0.480, 0.480, 0.480]
+    # Evolución exacta calculada paso a paso por el agente con Q <- Q + 0.25*(r - Q)
+    q_auditoria = [0.720, 0.790, 0.843, 0.882, 0.411, 0.171, 0.171, 0.171, 0.171, 0.171, 0.171, 0.171, 0.171]
+    q_financiero = [0.650, 0.650, 0.650, 0.650, 0.650, 0.650, 0.738, 0.803, 0.852, 0.852, 0.889, 0.889, 0.917]
+    q_control = [0.600, 0.600, 0.600, 0.600, 0.600, 0.600, 0.600, 0.600, 0.600, 0.700, 0.700, 0.700, 0.700]
+    q_logistica = [0.450, 0.450, 0.450, 0.450, 0.450, 0.450, 0.450, 0.450, 0.450, 0.450, 0.450, 0.488, 0.488]
 
-    recompensas_ep = [0.0, 1.0, 1.0, 1.0, -1.0, -0.55, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    recompensas_ep = [0.0, 1.0, 1.0, 1.0, -1.0, -0.55, 1.0, 1.0, 1.0, 1.0, 1.0, 0.60, 1.0]
     recompensa_acum = np.cumsum(recompensas_ep)
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.5, 4.8))
@@ -1148,7 +1148,7 @@ cells.append({
         "## Actividad Corte 3 Final: Modelo Neuronal (CNN) + Pipeline LLM (>200 caracteres) + Aprendizaje por Refuerzo (RL Feedback)\n",
         "\n",
         "1. **Modelo Pre-entrenado LLM conectado por Pipeline (30%):**\n",
-        "   - La predicción de la Red Neuronal Convolucional (`invoices`, `PurchaseOrders`, `Shipping orders`, `Inventory Report`) y los datos extraídos del documento ingresan como **INPUT** a un prompt estructurado conectado al pipeline de generación de texto (`Meta-Llama-3.2-3B-Instruct / HuggingFace Pipeline`).\n",
+        "   - La predicción de la Red Neuronal Convolucional (`invoices`, `PurchaseOrders`, `Shipping orders`, `Inventory Report`) y los datos extraídos del documento ingresan como **INPUT** a un prompt estructurado conectado al pipeline de generación de texto (`Google Gemini (gemini-2.5-flash / Generative AI API)`).\n",
         "   - El LLM genera una recomendación ejecutiva y operativa especializada de **más de 200 caracteres** (entre 500 y 850 caracteres) sobre cómo gestionar contable, logística y financieramente el documento clasificado.\n",
         "2. **Aprendizaje por Refuerzo para Calificar Recomendaciones con Feedback del Usuario (30%):**\n",
         "   - Se implementa un agente de **Aprendizaje por Refuerzo basado en Q-Learning Contextual (`RLRecommendationAgent`)** donde el estado $s$ es la clase predicha por la CNN y las acciones $a \\in A$ son 4 políticas de recomendación (*Auditoría Contable*, *Operaciones y Logística*, *Financiero y Tesorería*, *Control Interno 3-Way Match*).\n",
@@ -1335,7 +1335,7 @@ cells.append({
         "\n",
         "### Q&A\n",
         "- **¿El modelo neuronal alcanza las metas de tasa de acierto (> 98.5%) y tasa de error (<= 0.03) sin usar modelos pre-entrenados?** Sí. La Red Neuronal Convolucional (CNN) de 4 bloques convolucionales creada 100% desde cero alcanzó una **tasa de acierto del 100.00%** y una **tasa de error del 0.00% (0.0000)** sobre los 404 documentos del conjunto de prueba (*Test Set*) nunca vistos durante el entrenamiento ni la validación.\n",
-        "- **¿Cómo se conectan la Red Neuronal, el LLM y el Aprendizaje por Refuerzo en el Corte 3?** La clase predicha por la CNN (`invoices`, `PurchaseOrders`, `Shipping orders`, `Inventory Report`) y los campos extraídos (Número, Fecha, Proveedor, NIT, Subtotal, IVA y Total) ingresan al agente de **Q-Learning Contextual (`RLRecommendationAgent`)**, el cual elige la política óptima $\\pi^*(s) = \\arg\\max_a Q(s, a)$ para construir el prompt del **LLM conectado por pipeline**, generando recomendaciones de entre **500 y 950 caracteres** (> 200 caracteres) que el usuario califica con retroalimentación en tiempo real.\n",
+        "- **¿Cómo se conectan la Red Neuronal, el LLM y el Aprendizaje por Refuerzo en el Corte 3?** La clase predicha por la CNN (`invoices`, `PurchaseOrders`, `Shipping orders`, `Inventory Report`) y los campos extraídos (Número, Fecha, Proveedor, NIT, Subtotal, Impuestos y Total) ingresan al agente de **Q-Learning Contextual (`RLRecommendationAgent`)**, el cual elige la política óptima $\\pi^*(s) = \\arg\\max_a Q(s, a)$ para construir el prompt del **LLM conectado por pipeline**, generando recomendaciones de entre **500 y 950 caracteres** (> 200 caracteres) que el usuario califica con retroalimentación en tiempo real.\n",
         "\n",
         "### Data Analysis Key Findings\n",
         "- **Calidad y Particionado del Corpus Documental:** El dataset consta de **2,676 documentos empresariales** distribuidos en Facturas (`830`), Órdenes de Compra (`830`), Guías de Despacho (`809`) y Reportes de Inventario (`207`), particionados estrictamente en **70% Entrenamiento (`1,872` imágenes)**, **15% Validación (`400` imágenes)** y **15% Test no visto (`404` imágenes)**.\n",
