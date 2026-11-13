@@ -51,5 +51,7 @@ $RECYCLE.BIN/
 
 Web/.env
 .env
+CREDENCIALES_*
+sync_server.py
 
 web_update.zip
