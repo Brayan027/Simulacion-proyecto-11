@@ -858,11 +858,10 @@ class LLMPipelineEngine:
             f"- Directriz Operativa: {decision_rl['directriz_prompt']}{ajuste_usuario}\n\n"
             f"{sec_rectificacion}"
             f"4. INSTRUCCIONES DE RESPUESTA:\n"
-            f"Genera un dictamen profesional y estructurado de MÁS DE 200 CARACTERES enfocado estrictamente en este documento. "
-            f"Organiza tu respuesta con secciones claras, viñetas y formato profesional: "
-            f"a) 🔍 AUDITORÍA Y RECTIFICACIÓN IA (CNN vs. IA): Ratifica o rectifica explícitamente la clasificación del modelo convolucional sustentando las evidencias visuales y contables. "
-            f"b) Diagnóstico y puntos críticos de control según la estrategia '{decision_rl['accion_nombre']}'. "
-            f"c) Acciones recomendadas y próximos pasos para archivo, pago o auditoría."
+            f"Genera un dictamen profesional, estructurado y conciso (entre 220 y 380 caracteres) enfocado estrictamente en este documento: "
+            f"a) 🔍 AUDITORÍA IA: Ratifica o rectifica la clasificación CNN con evidencias contables. "
+            f"b) Diagnóstico de control según '{decision_rl['accion_nombre']}'. "
+            f"c) Acciones recomendadas y próximos pasos."
         )
         return prompt
 
@@ -900,9 +899,7 @@ class LLMPipelineEngine:
             if self.gemini_keys:
                 n = len(self.gemini_keys)
                 for mod in self._modelos_gemini():
-                    gen_cfg = {"temperature": 0.4, "maxOutputTokens": 2000}
-                    if mod.startswith("gemini-2.5"):
-                        gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
+                    gen_cfg = {"temperature": 0.3, "maxOutputTokens": 380, "thinkingConfig": {"thinkingBudget": 0}}
                     payload = {"contents": [{"parts": [{"text": limpio}]}], "generationConfig": gen_cfg}
                     for i in range(n):
                         idx = (self.gemini_idx + i) % n
@@ -913,7 +910,7 @@ class LLMPipelineEngine:
                             if time.time() - t_inicio > PRESUPUESTO_SEG:
                                 break
                             try:
-                                data = _post_json(url, payload, headers, timeout=25)
+                                data = _post_json(url, payload, headers, timeout=12)
                                 txt = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                                 if len(txt) > 200:
                                     self.gemini_idx = idx
@@ -968,10 +965,12 @@ class LLMPipelineEngine:
 
     @staticmethod
     def _modelos_gemini():
-        """Lista ordenada de modelos Gemini a probar (GEMINI_MODEL primero, luego alternativas)."""
+        """Lista ordenada de modelos Gemini a probar."""
         modelos = []
-        pref = os.environ.get("GEMINI_MODEL", "").strip()
-        for m in ([pref] if pref else []) + os.environ.get("GEMINI_MODELS_FALLBACK", "gemini-2.5-flash,gemini-2.0-flash,gemini-1.5-flash").split(","):
+        pref = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
+        if pref and pref not in modelos:
+            modelos.append(pref)
+        for m in os.environ.get("GEMINI_MODELS_FALLBACK", "gemini-2.5-flash").split(","):
             m = m.strip()
             if m and m not in modelos:
                 modelos.append(m)
@@ -1360,11 +1359,10 @@ class LLMPipelineEngine:
             f"- Estrategia Activa: Separación Preventiva de Archivos No Transaccionales.\n"
             f"- Objetivo de Control: Impedir la contaminación de las tablas transaccionales de MySQL y salvaguardar la exactitud contable.\n\n"
             f"3. INSTRUCCIONES DE RESPUESTA:\n"
-            f"Genera un dictamen analítico, técnico y profesional de MÁS DE 200 CARACTERES enfocado estrictamente en este archivo específico («{nombre_archivo}»).\n"
-            f"Estructura tu respuesta en 3 puntos claros:\n"
-            f"a) Diagnóstico de Incompatibilidad: Explica por qué este documento carece de validez fiscal, contable o comercial para la empresa.\n"
-            f"b) Evaluación de Riesgos: Qué riesgos de control interno o distorsión en balances se evitan al descartar este archivo.\n"
-            f"c) Medidas de Tratamiento: Justifica la separación automática y el protocolo de archivo en cuarentena."
+            f"Genera un dictamen analítico profesional, estructurado y conciso (entre 220 y 380 caracteres) para «{nombre_archivo}»:\n"
+            f"a) Incompatibilidad: Por qué carece de validez fiscal/contable para la empresa.\n"
+            f"b) Riesgos: Qué riesgos de control interno se evitan al descartarlo.\n"
+            f"c) Medidas: Justifica la separación preventiva en cuarentena."
         )
         texto = self._llamar_api_externa_si_disponible(prompt)
         modelo_usado = getattr(self, 'ultimo_modelo', None) or self.model_name

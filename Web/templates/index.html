@@ -1365,6 +1365,13 @@
         batchContainer.classList.add('hidden');
         if (loadingBox) {
           loadingBox.classList.remove('hidden');
+          const lt = document.getElementById('loadingTitulo');
+          if (lt) lt.textContent = "Clasificando estructura con CNN...";
+          setTimeout(() => {
+            if (!loadingBox.classList.contains('hidden') && lt) {
+              lt.textContent = "Auditando y generando dictamen con IA...";
+            }
+          }, 1100);
           lucide.createIcons();
         }
         const formData = new FormData();
@@ -1396,8 +1403,10 @@
             batchContainer.classList.add('hidden');
             ultimoResultado = data;
             mostrarResultados(data);
-            cargarStats();
-            cargarHistorial();
+            setTimeout(() => {
+              cargarStats().catch(() => {});
+              cargarHistorial().catch(() => {});
+            }, 50);
           } else {
             if (loadingBox) loadingBox.classList.add('hidden');
             placeholderResult.classList.remove('hidden');

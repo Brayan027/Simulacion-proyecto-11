@@ -275,8 +275,12 @@ init_sqlite()
 rl_agent = RLRecommendationAgent(DB_PATH, get_mysql_connection)
 llm_engine = LLMPipelineEngine(DB_PATH, get_mysql_connection)
 
+_SYNC_FLAG_FILE = os.path.join(BASE_DIR, '.sync_done')
+
 def sincronizar_recomendaciones_existentes():
     """Enriquece documentos existentes en SQLite y MySQL con recomendaciones LLM (>200 chars) y episodios RL iniciales."""
+    if os.path.exists(_SYNC_FLAG_FILE):
+        return
     try:
         conn = sqlite3.connect(DB_PATH, timeout=15)
         cur = conn.cursor()
@@ -358,8 +362,11 @@ def sincronizar_recomendaciones_existentes():
             except Exception as e:
                 print("Aviso enriqueciendo MySQL con LLM:", e)
 
-        # No sembrar episodios falsos: los feedbacks provienen exclusivamente del usuario real
-        pass
+        try:
+            with open(_SYNC_FLAG_FILE, 'w') as f:
+                f.write('1')
+        except Exception:
+            pass
     except Exception as e:
         print("Aviso sincronizando recomendaciones iniciales:", e)
 
@@ -369,7 +376,7 @@ sincronizar_recomendaciones_existentes()
 class NumpyCNNModel:
     """Inferencia de alta velocidad basada puramente en NumPy sin dependencias pesadas."""
     def __init__(self, npz_path):
-        data = np.load(npz_path)
+        data = np.load(npz_path, mmap_mode='r')
         self.w_conv1 = data['w_conv1']
         self.b_conv1 = data['b_conv1']
         self.w_conv2 = data['w_conv2']
@@ -502,7 +509,7 @@ def extraer_texto_crudo(ruta_archivo):
         try:
             import pymupdf
             doc = pymupdf.open(ruta_str)
-            for page in doc:
+            for page in doc[:3]:
                 texto += page.get_text() + "\n"
             doc.close()
         except Exception as e:
