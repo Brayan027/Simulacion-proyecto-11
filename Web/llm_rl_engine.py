@@ -847,34 +847,35 @@ class LLMPipelineEngine:
             'Inventory Report': 0.0
         }
 
-        # Evidencias Facturas
-        if re.search(r'\binvoices?\b', txt) or 'invoice' in name_low: scores['invoices'] += 4.5
-        if re.search(r'\bfacturas?\b', txt) or 'factura' in name_low: scores['invoices'] += 4.5
+        # Evidencias Facturas (evaluadas exclusivamente sobre contenido OCR y campos extraídos, sin depender del nombre del archivo)
+        if re.search(r'\binvoices?\b', txt): scores['invoices'] += 4.5
+        if re.search(r'\bfacturas?\b', txt): scores['invoices'] += 4.5
         if re.search(r'\b(vat|iva|tax|totalprice|subtotal|bill\s*to)\b', txt): scores['invoices'] += 3.0
         if total > 0 and (datos_extraidos.get('iva', 0.0) > 0 or re.search(r'\biva\b|\bvat\b', txt)): scores['invoices'] += 2.5
         if 'factura' in str(campos_esp).lower(): scores['invoices'] += 2.0
 
         # Evidencias Órdenes de Compra
-        if re.search(r'\bpurchase\s*orders?\b', txt) or 'purchase' in name_low: scores['PurchaseOrders'] += 5.0
-        if re.search(r'\borden(es)?\s*de\s*compra\b', txt) or 'orden' in name_low: scores['PurchaseOrders'] += 5.0
+        if re.search(r'\bpurchase\s*orders?\b', txt): scores['PurchaseOrders'] += 5.0
+        if re.search(r'\borden(es)?\s*de\s*compra\b', txt): scores['PurchaseOrders'] += 5.0
         if re.search(r'\b(buyer|comprador|requisition|p\.o\.|po\s*#)\b', txt): scores['PurchaseOrders'] += 3.5
         if 'orden' in str(campos_esp).lower() or 'comprador' in str(campos_esp).lower(): scores['PurchaseOrders'] += 2.0
 
         # Evidencias Despachos / Envíos
-        if re.search(r'\bshipping\s*orders?\b', txt) or 'shipping' in name_low: scores['Shipping orders'] += 5.0
+        if re.search(r'\bshipping\s*orders?\b', txt): scores['Shipping orders'] += 5.0
         if re.search(r'\b(despacho|guia\s*de\s*despacho|guia\s*de\s*envio|comprobante\s*de\s*entrega)\b', txt): scores['Shipping orders'] += 5.0
         if re.search(r'\b(ship\s*to|shipped\s*date|shipper\s*details|transportadora|carrier|flete|freight|tracking)\b', txt): scores['Shipping orders'] += 4.0
         if re.search(r'\b(speedy\s*express|united\s*package|federal\s*shipping)\b', txt): scores['Shipping orders'] += 4.5
         if 'guía' in str(campos_esp).lower() or 'transportadora' in str(campos_esp).lower() or 'flete' in str(campos_esp).lower(): scores['Shipping orders'] += 3.0
 
         # Evidencias Reportes de Inventario
-        if re.search(r'\b(inventory\s*report|stock\s*report)\b', txt) or 'stock' in name_low or 'inventory' in name_low: scores['Inventory Report'] += 5.5
-        if re.search(r'\breporte(s)?\s*de\s*inventario\b', txt) or 'inventario' in name_low: scores['Inventory Report'] += 5.5
+        if re.search(r'\b(inventory\s*report|stock\s*report)\b', txt): scores['Inventory Report'] += 5.5
+        if re.search(r'\breporte(s)?\s*de\s*inventario\b', txt): scores['Inventory Report'] += 5.5
         if re.search(r'\b(units\s*sold|units\s*in\s*stock|unidades\s*en\s*stock|existencias|kardex|almacen)\b', txt): scores['Inventory Report'] += 4.5
         if re.search(r'\bstock\s*report\s*for\b', txt): scores['Inventory Report'] += 5.0
         if 'inventario' in str(campos_esp).lower() or 'unidades en stock' in str(campos_esp).lower(): scores['Inventory Report'] += 3.0
 
         # Determinar clase dictaminada por la IA
+        total_evidencia = sum(scores.values())
         clase_sugerida_ia = max(scores, key=scores.get)
         max_score = scores[clase_sugerida_ia]
 
@@ -895,7 +896,11 @@ class LLMPipelineEngine:
                     concordancia = True
 
         tipo_ia_es = TRADUCCION_ESTADOS.get(clase_ia, clase_ia)
-        confianza_ia = round(min(99.95, max(confianza_cnn, 97.5) + (1.2 if concordancia else -1.5)), 2)
+        if concordancia:
+            confianza_ia = round(float(confianza_cnn), 2)
+        else:
+            proporcion_evidencia = (max_score / total_evidencia) * 100.0 if total_evidencia > 0 else float(confianza_cnn)
+            confianza_ia = round(proporcion_evidencia, 2)
 
         if concordancia:
             veredicto = 'CONCORDANCIA_CONFIRMADA'

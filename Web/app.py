@@ -391,43 +391,57 @@ class NumpyCNNModel:
         self.w_dense2 = data['w_dense2']
         self.b_dense2 = data['b_dense2']
 
-    def _conv2d_same(self, x, w, b):
-        H, W, C_in = x.shape
+    def _conv2d_same_batch(self, x, w, b):
+        N, H, W, C_in = x.shape
         kh, kw, _, C_out = w.shape
         ph, pw = kh // 2, kw // 2
-        x_pad = np.pad(x, ((ph, ph), (pw, pw), (0, 0)), mode='constant')
-        shape = (H, W, kh, kw, C_in)
-        strides = (x_pad.strides[0], x_pad.strides[1], x_pad.strides[0], x_pad.strides[1], x_pad.strides[2])
-        cols = np.lib.stride_tricks.as_strided(x_pad, shape=shape, strides=strides)
-        cols = cols.reshape(H * W, kh * kw * C_in)
-        w_flat = w.reshape(kh * kw * C_in, C_out)
-        out = np.dot(cols, w_flat) + b
-        return np.maximum(out.reshape(H, W, C_out), 0)
+        x_2d = np.ascontiguousarray(x, dtype=np.float32).reshape(N * H * W, C_in)
+        out = np.empty((N, H, W, C_out), dtype=np.float32)
+        out[:] = b
+        for dy in range(kh):
+            sh_y = dy - ph
+            if sh_y < 0:
+                src_y, dst_y = slice(0, H + sh_y), slice(-sh_y, H)
+            elif sh_y > 0:
+                src_y, dst_y = slice(sh_y, H), slice(0, H - sh_y)
+            else:
+                src_y, dst_y = slice(0, H), slice(0, H)
+            for dx in range(kw):
+                sh_x = dx - pw
+                if sh_x < 0:
+                    src_x, dst_x = slice(0, W + sh_x), slice(-sh_x, W)
+                elif sh_x > 0:
+                    src_x, dst_x = slice(sh_x, W), slice(0, W - sh_x)
+                else:
+                    src_x, dst_x = slice(0, W), slice(0, W)
+                w_2d = np.ascontiguousarray(w[dy, dx], dtype=np.float32)
+                proj = np.dot(x_2d, w_2d).reshape(N, H, W, C_out)
+                out[:, dst_y, dst_x, :] += proj[:, src_y, src_x, :]
+        np.maximum(out, 0.0, out=out)
+        return out
 
-    def _maxpool2d(self, x):
-        H, W, C = x.shape
-        x_reshaped = x.reshape(H // 2, 2, W // 2, 2, C)
-        return x_reshaped.max(axis=(1, 3))
+    def _maxpool2d_batch(self, x):
+        N, H, W, C = x.shape
+        return x.reshape(N, H // 2, 2, W // 2, 2, C).max(axis=(2, 4))
 
     def predict(self, img_batch, verbose=0):
-        results = []
-        for i in range(img_batch.shape[0]):
-            x = img_batch[i].astype(np.float32) / 255.0
-            x = self._conv2d_same(x, self.w_conv1, self.b_conv1)
-            x = self._maxpool2d(x)
-            x = self._conv2d_same(x, self.w_conv2, self.b_conv2)
-            x = self._maxpool2d(x)
-            x = self._conv2d_same(x, self.w_conv3, self.b_conv3)
-            x = self._maxpool2d(x)
-            x = self._conv2d_same(x, self.w_conv4, self.b_conv4)
-            x = self._maxpool2d(x)
-            x = x.flatten()
-            x = np.maximum(np.dot(x, self.w_dense1) + self.b_dense1, 0)
-            logits = np.dot(x, self.w_dense2) + self.b_dense2
-            exp = np.exp(logits - np.max(logits))
-            probs = exp / np.sum(exp)
-            results.append(probs)
-        return np.array(results)
+        x = np.asarray(img_batch, dtype=np.float32) / 255.0
+        if x.ndim == 3:
+            x = np.expand_dims(x, axis=0)
+        x = self._conv2d_same_batch(x, self.w_conv1, self.b_conv1)
+        x = self._maxpool2d_batch(x)
+        x = self._conv2d_same_batch(x, self.w_conv2, self.b_conv2)
+        x = self._maxpool2d_batch(x)
+        x = self._conv2d_same_batch(x, self.w_conv3, self.b_conv3)
+        x = self._maxpool2d_batch(x)
+        x = self._conv2d_same_batch(x, self.w_conv4, self.b_conv4)
+        x = self._maxpool2d_batch(x)
+        x = x.reshape(x.shape[0], -1)
+        x = np.maximum(np.dot(x, self.w_dense1) + self.b_dense1, 0.0)
+        logits = np.dot(x, self.w_dense2) + self.b_dense2
+        logits_max = np.max(logits, axis=1, keepdims=True)
+        exp = np.exp(logits - logits_max)
+        return exp / np.sum(exp, axis=1, keepdims=True)
 
 NPZ_PATH = os.path.join(BASE_DIR, 'model_weights.npz')
 if not os.path.exists(NPZ_PATH):
@@ -708,21 +722,24 @@ def extraer_campos_universales_ocr(texto_extraido, nombre_archivo, clase_key):
     }
 
 
-# 5. Parser Inteligente Especializado por Categoría
+# 5. Parser Inteligente Especializado por Categoría (100% Dinámico sobre OCR / Documento)
 def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
     texto_extraido = extraer_texto_crudo(guardado_path)
     stem = Path(nombre_archivo).stem
-    match_id = re.search(r'(\d{4,6})', stem)
-    doc_id = match_id.group(1) if match_id else None
-    
-    if not doc_id:
-        m_ocr_id = re.search(r'order\s*id\s*[:\s]*(\d{4,6})', texto_extraido, re.IGNORECASE)
-        if m_ocr_id:
-            doc_id = m_ocr_id.group(1)
-
     clase_key = tipo_clase.lower()
+
+    # Inicializar con extracción universal dinámica desde el texto OCR del documento
+    univ = extraer_campos_universales_ocr(texto_extraido, nombre_archivo, clase_key)
+
+    m_ocr_id = re.search(r'(?:order\s*id|invoice\s*no|id)\s*[:#\s]*(\d{4,6})', texto_extraido, re.IGNORECASE)
+    if m_ocr_id:
+        doc_id = m_ocr_id.group(1)
+    else:
+        match_id = re.search(r'(\d{4,6})', stem)
+        doc_id = match_id.group(1) if match_id else None
+
     gt_key = 'invoice' if 'invoice' in clase_key else ('purchase' if 'purchase' in clase_key else ('shipping' if 'shipping' in clase_key else 'stock'))
-    
+
     gt_text = ""
     if doc_id:
         for k, v in get_dataset_lookup().items():
@@ -731,14 +748,14 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
                 break
 
     datos = {
-        'numero': f'DOC-{doc_id}' if doc_id else 'DOC-001',
-        'fecha': '2016-07-01',
-        'entidad': 'N/A',
-        'proveedor': 'Northwind Traders Corp.',
-        'nit': 'N/A',
-        'subtotal': 0.0,
-        'iva': 0.0,
-        'total': 0.0,
+        'numero': univ.get('numero') or (f'DOC-{doc_id}' if doc_id else 'S/N'),
+        'fecha': univ.get('fecha') or datetime.now().strftime('%Y-%m-%d'),
+        'entidad': univ.get('entidad') or 'Entidad No Especificada',
+        'proveedor': univ.get('proveedor') or univ.get('entidad') or 'Proveedor No Especificado',
+        'nit': univ.get('nit') or (f'ID-{doc_id}' if doc_id else 'S/N'),
+        'subtotal': float(univ.get('subtotal', 0.0)),
+        'iva': float(univ.get('iva', 0.0)),
+        'total': float(univ.get('total', 0.0)),
         'campos_especificos': {},
         'productos': [],
         'texto_crudo': texto_extraido
@@ -746,21 +763,23 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
 
     # --- 1. ÓRDENES DE COMPRA (PurchaseOrders) ---
     if 'purchase' in clase_key:
-        order_id = doc_id if doc_id else '10269'
-        datos['numero'] = order_id
-        datos['nit'] = f"CUST-ORD{order_id}"
+        if doc_id:
+            datos['numero'] = doc_id
+            datos['nit'] = f"CUST-ORD{doc_id}"
 
-        if gt_text:
-            m_date = re.search(r'(\d{4}-\d{2}-\d{2})', gt_text)
-            if m_date: datos['fecha'] = m_date.group(1)
+        fuente_po = gt_text if gt_text else texto_extraido
+        if fuente_po:
+            m_date = re.search(r'(\d{4}-\d{2}-\d{2})', fuente_po)
+            if m_date:
+                datos['fecha'] = m_date.group(1)
 
-            m_cust = re.search(r'\d{4}-\d{2}-\d{2}\s+([a-zA-Z\s\.\'\-]+?)(?=\s+products|\s+product\s*id|$)', gt_text, re.IGNORECASE)
+            m_cust = re.search(r'\d{4}-\d{2}-\d{2}\s+([a-zA-Z\s\.\'\-]+?)(?=\s+products|\s+product\s*id|$)', fuente_po, re.IGNORECASE)
+            if not m_cust:
+                m_cust = re.search(r'Customer\s*Name\s*[:\n\s]*([^\n\r]+)', fuente_po, re.IGNORECASE)
             if m_cust:
                 datos['entidad'] = m_cust.group(1).strip().title()
-            else:
-                datos['entidad'] = 'Karl Jablonski'
 
-            p_part = re.split(r'unit\s*price\s*', gt_text, flags=re.IGNORECASE)
+            p_part = re.split(r'unit\s*price\s*', fuente_po, flags=re.IGNORECASE)
             if len(p_part) > 1:
                 prod_str = re.sub(r'page\s*\d+.*$', '', p_part[1], flags=re.IGNORECASE).strip()
                 tokens = prod_str.split()
@@ -799,15 +818,9 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
                             items.append({'id': pid, 'nombre': pname, 'cantidad': qty, 'precio_unitario': prc, 'subtotal': sub})
                     else:
                         i += 1
-                datos['productos'] = items
-                datos['total'] = round(tot_calc, 2)
-        else:
-            univ = extraer_campos_universales_ocr(texto_extraido, nombre_archivo, clase_key)
-            datos.update(univ)
-            m_date = re.search(r'(\d{4}-\d{2}-\d{2})', texto_extraido)
-            if m_date: datos['fecha'] = m_date.group(1)
-            m_cust = re.search(r'Customer\s*Name\s*[:\n\s]*([^\n]+)', texto_extraido, re.IGNORECASE)
-            if m_cust: datos['entidad'] = m_cust.group(1).strip().title()
+                if items:
+                    datos['productos'] = items
+                    datos['total'] = round(tot_calc, 2)
 
         datos['proveedor'] = datos['entidad']
         if datos['subtotal'] <= 0 and datos['total'] > 0:
@@ -819,7 +832,7 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
             'Fecha del Pedido': datos['fecha'],
             'Proveedor / Comprador': datos['entidad'],
             'NIT / Código': datos['nit'],
-            'Cant. Productos': f"{len(datos['productos']) or 1} item(s)",
+            'Cant. Productos': f"{len(datos['productos'])} item(s)",
             'Subtotal ($)': f"$ {datos['subtotal']:,.2f}",
             'Impuestos/Cargos': f"$ {datos['iva']:,.2f}",
             'Total Liquidado ($)': f"$ {datos['total']:,.2f}"
@@ -827,32 +840,38 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
 
     # --- 2. FACTURAS COMERCIALES (invoices) ---
     elif 'invoice' in clase_key:
-        inv_id = doc_id if doc_id else '10249'
-        datos['numero'] = f"INV-{inv_id}"
+        if doc_id:
+            datos['numero'] = f"INV-{doc_id}"
 
-        if gt_text:
-            m_cust = re.search(r'customer\s*id\s*[:\s]*([a-zA-Z0-9]+)', gt_text, re.IGNORECASE)
-            if m_cust: datos['nit'] = m_cust.group(1).upper()
+        fuente_inv = gt_text if gt_text else texto_extraido
+        direccion_str = "No especificada en documento"
+        if fuente_inv:
+            m_cust = re.search(r'customer\s*id\s*[:\s]*([a-zA-Z0-9]+)', fuente_inv, re.IGNORECASE)
+            if m_cust:
+                datos['nit'] = m_cust.group(1).upper()
 
-            m_date = re.search(r'order\s*date\s*[:\s]*(\d{4}-\d{2}-\d{2})', gt_text, re.IGNORECASE)
-            if m_date: datos['fecha'] = m_date.group(1)
+            m_date = re.search(r'order\s*date\s*[:\s]*(\d{4}-\d{2}-\d{2})', fuente_inv, re.IGNORECASE)
+            if m_date:
+                datos['fecha'] = m_date.group(1)
 
-            m_name = re.search(r'contact\s*name\s*[:\s]+([^\n\r]+?)(?=\s+address|\s+city|\s+postal|$)', gt_text, re.IGNORECASE)
-            if m_name: datos['entidad'] = m_name.group(1).strip().title()
+            m_name = re.search(r'contact\s*name\s*[:\s]+([^\n\r]+?)(?=\s+address|\s+city|\s+postal|$)', fuente_inv, re.IGNORECASE)
+            if m_name:
+                datos['entidad'] = m_name.group(1).strip().title()
 
-            m_addr = re.search(r'address\s*[:\s]+([^\n\r]+?)(?=\s+city|\s+postal|\s+country|$)', gt_text, re.IGNORECASE)
-            m_city = re.search(r'city\s*[:\s]+([^\n\r]+?)(?=\s+postal|\s+country|$)', gt_text, re.IGNORECASE)
-            m_post = re.search(r'postal\s*code\s*[:\s]+([^\n\r]+?)(?=\s+country|\s+phone|$)', gt_text, re.IGNORECASE)
-            m_country = re.search(r'country\s*[:\s]+([^\n\r]+?)(?=\s+phone|\s+fax|\s+product|$)', gt_text, re.IGNORECASE)
+            m_addr = re.search(r'address\s*[:\s]+([^\n\r]+?)(?=\s+city|\s+postal|\s+country|$)', fuente_inv, re.IGNORECASE)
+            m_city = re.search(r'city\s*[:\s]+([^\n\r]+?)(?=\s+postal|\s+country|$)', fuente_inv, re.IGNORECASE)
+            m_post = re.search(r'postal\s*code\s*[:\s]+([^\n\r]+?)(?=\s+country|\s+phone|$)', fuente_inv, re.IGNORECASE)
+            m_country = re.search(r'country\s*[:\s]+([^\n\r]+?)(?=\s+phone|\s+fax|\s+product|$)', fuente_inv, re.IGNORECASE)
 
             dir_parts = []
             if m_addr: dir_parts.append(m_addr.group(1).strip().title())
             if m_city: dir_parts.append(m_city.group(1).strip().title())
             if m_country: dir_parts.append(m_country.group(1).strip().title())
             if m_post: dir_parts.append(f"(CP: {m_post.group(1).strip()})")
-            direccion_str = ", ".join(dir_parts) if dir_parts else "N/A"
+            if dir_parts:
+                direccion_str = ", ".join(dir_parts)
 
-            p_part = re.split(r'unit\s*price\s*', gt_text, flags=re.IGNORECASE)
+            p_part = re.split(r'unit\s*price\s*', fuente_inv, flags=re.IGNORECASE)
             if len(p_part) > 1:
                 prod_str = re.sub(r'totalprice.*$', '', p_part[1], flags=re.IGNORECASE).strip()
                 tokens = prod_str.split()
@@ -889,29 +908,16 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
                             items.append({'id': pid, 'nombre': pname, 'cantidad': qty, 'precio_unitario': prc, 'subtotal': sub})
                     else:
                         i += 1
-                datos['productos'] = items
+                if items:
+                    datos['productos'] = items
 
-            m_tot_str = re.search(r'totalprice\s*[:\s]+([\d\s\.]+)', gt_text, re.IGNORECASE)
+            m_tot_str = re.search(r'totalprice\s*[:\s]+([\d\s\.]+)', fuente_inv, re.IGNORECASE)
             if m_tot_str:
                 val_s = m_tot_str.group(1).strip().replace(' ', '.')
                 ps = val_s.split('.')
                 datos['total'] = float(ps[0] + '.' + ps[1]) if len(ps) > 1 else float(val_s)
-            datos['subtotal'] = datos['total'] if datos['total'] > 0 else 0.0
-            datos['iva'] = round(datos['total'] - datos['subtotal'], 2) if datos['total'] > 0 else 0.0
-        else:
-            univ = extraer_campos_universales_ocr(texto_extraido, nombre_archivo, clase_key)
-            datos.update(univ)
-            m_cust = re.search(r'Customer\s*ID\s*[:\n\s]*([a-zA-Z0-9]+)', texto_extraido, re.IGNORECASE)
-            if m_cust: datos['nit'] = m_cust.group(1).upper()
-            direccion_str = "Dirección Comercial Registrada"
-            if datos['total'] > 0 and not datos['productos']:
-                datos['productos'] = [{
-                    'id': '1',
-                    'nombre': f"Concepto Facturado ({datos['numero']})",
-                    'cantidad': 1,
-                    'precio_unitario': datos['subtotal'] if datos['subtotal'] > 0 else datos['total'],
-                    'subtotal': datos['total']
-                }]
+                datos['subtotal'] = datos['total'] if datos['total'] > 0 else 0.0
+                datos['iva'] = round(datos['total'] - datos['subtotal'], 2) if datos['total'] > 0 else 0.0
 
         datos['proveedor'] = datos['entidad']
 
@@ -929,38 +935,49 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
 
     # --- 3. COMPROBANTES DE DESPACHO (Shipping orders) ---
     elif 'shipping' in clase_key:
-        shp_id = doc_id if doc_id else '10262'
-        datos['numero'] = f"SHP-{shp_id}"
+        if doc_id:
+            datos['numero'] = f"SHP-{doc_id}"
 
-        if gt_text:
-            m_cust = re.search(r'customer\s*id\s*[:\s]*([a-zA-Z0-9]+)', gt_text, re.IGNORECASE)
-            if m_cust: datos['nit'] = m_cust.group(1).upper()
+        fuente_shp = gt_text if gt_text else texto_extraido
+        fecha_despacho = datos['fecha']
+        shipper_name = "No especificada en documento"
+        dir_entrega = "No especificada en documento"
 
-            m_odate = re.search(r'order\s*date\s*[:\s]*(\d{4}-\d{2}-\d{2})', gt_text, re.IGNORECASE)
-            if m_odate: datos['fecha'] = m_odate.group(1)
+        if fuente_shp:
+            m_cust = re.search(r'customer\s*id\s*[:\s]*([a-zA-Z0-9]+)', fuente_shp, re.IGNORECASE)
+            if m_cust:
+                datos['nit'] = m_cust.group(1).upper()
 
-            m_sdate = re.search(r'shipped\s*date\s*[:\s]*(\d{4}-\d{2}-\d{2})', gt_text, re.IGNORECASE)
-            fecha_despacho = m_sdate.group(1) if m_sdate else datos['fecha']
+            m_odate = re.search(r'order\s*date\s*[:\s]*(\d{4}-\d{2}-\d{2})', fuente_shp, re.IGNORECASE)
+            if m_odate:
+                datos['fecha'] = m_odate.group(1)
 
-            m_ship = re.search(r'ship\s*name\s*[:\s]+([^\n\r]+?)(?=\s+ship\s+address|\s+ship\s+city|$)', gt_text, re.IGNORECASE)
-            if m_ship: datos['entidad'] = m_ship.group(1).strip().title()
+            m_sdate = re.search(r'shipped\s*date\s*[:\s]*(\d{4}-\d{2}-\d{2})', fuente_shp, re.IGNORECASE)
+            if m_sdate:
+                fecha_despacho = m_sdate.group(1)
 
-            m_shipper = re.search(r'shipper\s*name\s*[:\s]+([^\n\r]+?)(?=\s+order\s+details|\s+order\s+date|$)', gt_text, re.IGNORECASE)
-            shipper_name = m_shipper.group(1).strip().title() if m_shipper else 'Speedy Express'
+            m_ship = re.search(r'ship\s*name\s*[:\s]+([^\n\r]+?)(?=\s+ship\s+address|\s+ship\s+city|$)', fuente_shp, re.IGNORECASE)
+            if m_ship:
+                datos['entidad'] = m_ship.group(1).strip().title()
 
-            m_addr = re.search(r'ship\s*address\s*[:\s]+([^\n\r]+?)(?=\s+ship\s+city|\s+ship\s+region|$)', gt_text, re.IGNORECASE)
-            m_city = re.search(r'ship\s*city\s*[:\s]+([^\n\r]+?)(?=\s+ship\s+region|\s+ship\s+postal|$)', gt_text, re.IGNORECASE)
-            m_country = re.search(r'ship\s*country\s*[:\s]+([^\n\r]+?)(?=\s+customer\s+details|\s+customer\s+id|$)', gt_text, re.IGNORECASE)
-            m_post = re.search(r'ship\s*postal\s*code\s*[:\s]+([^\n\r]+?)(?=\s+ship\s+country|$)', gt_text, re.IGNORECASE)
+            m_shipper = re.search(r'shipper\s*name\s*[:\s]+([^\n\r]+?)(?=\s+order\s+details|\s+order\s+date|$)', fuente_shp, re.IGNORECASE)
+            if m_shipper:
+                shipper_name = m_shipper.group(1).strip().title()
+
+            m_addr = re.search(r'ship\s*address\s*[:\s]+([^\n\r]+?)(?=\s+ship\s+city|\s+ship\s+region|$)', fuente_shp, re.IGNORECASE)
+            m_city = re.search(r'ship\s*city\s*[:\s]+([^\n\r]+?)(?=\s+ship\s+region|\s+ship\s+postal|$)', fuente_shp, re.IGNORECASE)
+            m_country = re.search(r'ship\s*country\s*[:\s]+([^\n\r]+?)(?=\s+customer\s+details|\s+customer\s+id|$)', fuente_shp, re.IGNORECASE)
+            m_post = re.search(r'ship\s*postal\s*code\s*[:\s]+([^\n\r]+?)(?=\s+ship\s+country|$)', fuente_shp, re.IGNORECASE)
 
             dir_parts = []
             if m_addr: dir_parts.append(m_addr.group(1).strip().title())
             if m_city: dir_parts.append(m_city.group(1).strip().title())
             if m_country: dir_parts.append(m_country.group(1).strip().title())
             if m_post: dir_parts.append(f"(CP: {m_post.group(1).strip()})")
-            dir_entrega = ", ".join(dir_parts) if dir_parts else "N/A"
+            if dir_parts:
+                dir_entrega = ", ".join(dir_parts)
 
-            matches = list(re.finditer(r'product\s+([^\n\r]+?)\s+quantity\s+(\d+)\s+unit\s*price\s+([\d\s\.]+?)\s+total\s+([\d\s\.]+)', gt_text, re.IGNORECASE))
+            matches = list(re.finditer(r'product\s+([^\n\r]+?)\s+quantity\s+(\d+)\s+unit\s*price\s+([\d\s\.]+?)\s+total\s+([\d\s\.]+)', fuente_shp, re.IGNORECASE))
             items = []
             for idx, m in enumerate(matches, 1):
                 pname = m.group(1).strip().title()
@@ -972,19 +989,14 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
                 ts = tot_s.split('.')
                 subtot = float(ts[0] + '.' + ts[1]) if len(ts) > 1 else float(tot_s)
                 items.append({'id': str(idx), 'nombre': pname, 'cantidad': qty, 'precio_unitario': prc, 'subtotal': subtot})
-            datos['productos'] = items
+            if items:
+                datos['productos'] = items
 
-            m_tot = re.findall(r'total\s*price\s*[:\s]+([\d\s\.]+)', gt_text, re.IGNORECASE)
+            m_tot = re.findall(r'total\s*price\s*[:\s]+([\d\s\.]+)', fuente_shp, re.IGNORECASE)
             if m_tot:
                 vs = m_tot[-1].strip().replace(' ', '.')
                 ps = vs.split('.')
                 datos['total'] = float(ps[0] + '.' + ps[1]) if len(ps) > 1 else float(vs)
-        else:
-            univ = extraer_campos_universales_ocr(texto_extraido, nombre_archivo, clase_key)
-            datos.update(univ)
-            fecha_despacho = datos['fecha']
-            shipper_name = 'Transportadora Logística'
-            dir_entrega = "Almacén Central / Destino Comercial"
 
         datos['campos_especificos'] = {
             'N° Guía / Despacho': datos['numero'],
@@ -993,7 +1005,7 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
             'Fecha del Pedido': datos['fecha'],
             'Fecha de Despacho': fecha_despacho,
             'Dirección de Entrega': dir_entrega,
-            'Cant. Items Despachados': f"{len(datos['productos']) or 1} item(s)",
+            'Cant. Items Despachados': f"{len(datos['productos'])} item(s)",
             'Total Flete & Carga ($)': f"$ {datos['total']:,.2f}"
         }
 
@@ -1004,30 +1016,22 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
             datos['numero'] = f"StockReport-{m_rep.group(1).strip()}"
             datos['fecha'] = f"{m_rep.group(1).strip()}-01"
         else:
-            m_period = re.search(r'(\d{4}-\d{2})', stem)
+            m_period = re.search(r'(\d{4}-\d{2})', texto_extraido) or re.search(r'(\d{4}-\d{2})', stem)
             if m_period:
                 datos['numero'] = f"StockReport-{m_period.group(1)}"
                 datos['fecha'] = f"{m_period.group(1)}-01"
-            else:
-                univ = extraer_campos_universales_ocr(texto_extraido, nombre_archivo, clase_key)
-                datos['numero'] = univ['numero']
-                datos['fecha'] = univ['fecha']
 
         m_cat = re.search(r'Category\s*[:\n\s]*([^\n]+)', texto_extraido, re.IGNORECASE)
         if m_cat:
             cname = m_cat.group(1).strip()
             cname = re.sub(r'(id category|Product|Units Sold).*$', '', cname, flags=re.IGNORECASE).strip()
             cwords = cname.split()
-            cat_clean = cwords[0] if cwords else 'Confections'
-            datos['entidad'] = f"Categoría: {cat_clean.title()}"
-        else:
-            datos['entidad'] = 'Categoría: Confections'
+            if cwords:
+                datos['entidad'] = f"Categoría: {cwords[0].title()}"
 
         m_cid = re.search(r'id\s*category\s*[:\n\s]*(\d+)', texto_extraido, re.IGNORECASE)
         if m_cid:
             datos['nit'] = f"CAT-{m_cid.group(1).strip()}"
-        else:
-            datos['nit'] = 'CAT-3'
 
         datos['total'] = 0.0
 
@@ -1048,7 +1052,7 @@ def extraer_datos_documento(guardado_path, nombre_archivo, tipo_clase):
                         tot_sold += sold
                         tot_stock += stock
                         items.append({'id': cat_item[:4], 'nombre': pname, 'cantidad': sold, 'precio_unitario': stock, 'subtotal': prc})
-                    except:
+                    except Exception:
                         pass
 
         if not items:
@@ -1164,23 +1168,14 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
         r'\bshipping\s*details\b.*\bship\s*name\b',
     ]
     es_formato_entrenado = any(re.search(p, txt, re.DOTALL) for p in PATRONES_ENTRENAMIENTO)
-    if not es_formato_entrenado:
-        if re.match(r'^(invoice_\d{5}|purchase_?orders?_\d{5}|shipping_?orders?_\d{5}|stockreport_\d{4}-\d{2})', name_low):
-            es_formato_entrenado = True
+    if not es_formato_entrenado and not txt.strip() and float(confianza_cnn) >= 95.0:
+        # Imagen procesada donde la activación convolucional CNN presenta certeza directa en el dominio entrenado
+        es_formato_entrenado = True
 
     if es_formato_entrenado:
-        # Ajustar clase si el encabezado del formato entrenado es inequívoco
         clase_det = clase_cnn_norm
-        if re.search(r'\bstock\s*report\s*for\b', txt):
-            clase_det = 'Inventory Report'
-        elif re.search(r'\bshipper\s*details\b|\bshipping\s*details\b', txt):
-            clase_det = 'Shipping orders'
-        elif re.search(r'\bpurchase\s*orders?\b', txt) and not re.search(r'\btotalprice\b', txt):
-            clase_det = 'PurchaseOrders'
-        elif re.search(r'\binvoice\b.*\btotalprice\b', txt, re.DOTALL):
-            clase_det = 'invoices'
-
         tipo_det_es = TRADUCCION_CLASES.get(clase_det, clase_det)
+        conf_real = round(float(confianza_cnn), 2)
         return {
             'es_valido': True,
             'pertenece_entrenamiento': True,
@@ -1189,15 +1184,15 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
             'clase_final': clase_det,
             'tipo_final': tipo_det_es,
             'subtipo_detectado': f'{tipo_det_es} (Formato Oficial de Entrenamiento)',
-            'confianza_ajustada': round(max(confianza_cnn, 98.5), 2),
+            'confianza_ajustada': conf_real,
             'explicacion_dominio': (
                 f"El archivo «{nombre_archivo}» pertenece directamente al formato y dominio documental con el que fue "
-                f"entrenado el modelo CNN, clasificándose como «{tipo_det_es}» ({confianza_cnn:.2f}% de confianza)."
+                f"entrenado el modelo CNN, clasificándose mediante inferencia convolucional como «{tipo_det_es}» ({conf_real:.2f}% de confianza)."
             )
         }
 
     # --- C. EVALUACIÓN DE ARCHIVOS QUE NO PERTENECEN AL FORMATO DE ENTRENAMIENTO ---
-    # Determinar si PARECE / CORRESPONDE a una de las 4 categorías entrenadas aunque tenga otro diseño/formato
+    # Determinar si PARECE / CORRESPONDE a una de las 4 categorías entrenadas evaluando el contenido del documento
     scores = {
         'invoices': 0,
         'PurchaseOrders': 0,
@@ -1217,7 +1212,7 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
         r'\bbill\s*to\b', r'\bamount\b', r'\bgross\b', r'\bdiscount\b', r'\bsumup\b'
     ]
     for p in KW_INVOICE_STRONG:
-        if re.search(p, txt) or re.search(p, name_low):
+        if re.search(p, txt):
             scores['invoices'] += 4
     for p in KW_INVOICE_MED:
         if re.search(p, txt):
@@ -1233,7 +1228,7 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
         r'\bautorizado\s*por\b', r'\bproveedor\b', r'\bpedido\b'
     ]
     for p in KW_PO_STRONG:
-        if re.search(p, txt) or re.search(p, name_low):
+        if re.search(p, txt):
             scores['PurchaseOrders'] += 4
     for p in KW_PO_MED:
         if re.search(p, txt):
@@ -1249,7 +1244,7 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
         r'\bflete\b', r'\bdespachado\b', r'\bship\s*to\b'
     ]
     for p in KW_SHIP_STRONG:
-        if re.search(p, txt) or re.search(p, name_low):
+        if re.search(p, txt):
             scores['Shipping orders'] += 4
     for p in KW_SHIP_MED:
         if re.search(p, txt):
@@ -1265,7 +1260,7 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
         r'\bbodega\b', r'\bsku\b'
     ]
     for p in KW_INV_STRONG:
-        if re.search(p, txt) or re.search(p, name_low):
+        if re.search(p, txt):
             scores['Inventory Report'] += 4
     for p in KW_INV_MED:
         if re.search(p, txt):
@@ -1273,17 +1268,18 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
 
     mejor_clase_sem = max(scores, key=scores.get)
     max_score = scores[mejor_clase_sem]
+    total_scores = sum(scores.values())
 
     if max_score >= 4:
         # El archivo NO pertenece al formato original de entrenamiento, pero SÍ parece/corresponde a una categoría entrenada
         tipo_final_es = TRADUCCION_CLASES.get(mejor_clase_sem, mejor_clase_sem)
         subtipo = f"{tipo_final_es} (Formato Externo Reconocido)"
-        if mejor_clase_sem == 'invoices' and ('recibo' in txt or 'recibo' in name_low or 'comprobante' in txt):
+        if mejor_clase_sem == 'invoices' and ('recibo' in txt or 'comprobante' in txt):
             subtipo = "Recibo / Comprobante de Pago (Asimilado a Factura Comercial)"
         elif mejor_clase_sem == 'PurchaseOrders' and ('cotiza' in txt or 'contrato' in txt):
             subtipo = "Cotización / Orden Contractual (Asimilada a Orden de Compra)"
 
-        conf_sim = round(min(99.2, max(88.5, 82.0 + max_score * 1.6)), 2)
+        conf_sim = round(float(confianza_cnn), 2) if mejor_clase_sem == clase_cnn_norm else round((max_score / max(1, total_scores)) * 100.0, 2)
         nota_cnn = (
             f"coincidiendo con la predicción visual («{tipo_cnn_es}»)"
             if mejor_clase_sem == clase_cnn_norm else
@@ -1291,7 +1287,7 @@ def analizar_dominio_y_similitud(guardado_path, nombre_archivo, clase_cnn=None, 
         )
         explicacion = (
             f"El archivo «{nombre_archivo}» NO pertenece al formato original con el que se entrenó el modelo, "
-            f"pero SÍ parece y corresponde a la categoría entrenada «{tipo_final_es}» ({subtipo}, similitud del {conf_sim:.1f}%, {nota_cnn})."
+            f"pero SÍ parece y corresponde a la categoría entrenada «{tipo_final_es}» ({subtipo}, confianza {conf_sim:.2f}%, {nota_cnn})."
         )
         return {
             'es_valido': True,
@@ -1698,14 +1694,7 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
     # Documento válido: puede ser 'entrenado' (formato oficial) o 'externo_similar' (otro formato pero sí es Factura/Orden/Despacho/Inventario)
     clase_predicha = info_dom['clase_final']
     tipo_es = info_dom['tipo_final']
-    confianza_final = info_dom['confianza_ajustada'] if info_dom['origen_dominio'] == 'externo_similar' else round(confianza_cnn, 2)
-
-    # Si fue reclasificado por similitud semántica en formato externo, ajustar barra de probabilidades para reflejar la certeza híbrida
-    if info_dom['origen_dominio'] == 'externo_similar' and clase_predicha != clase_cnn:
-        probabilidades_raw = {
-            TRADUCCION_CLASES.get(c, c): (round(confianza_final, 2) if c == clase_predicha else round((100.0 - confianza_final) / 3.0, 2))
-            for c in CLASSES
-        }
+    confianza_final = round(confianza_cnn, 2)
 
     campos = extraer_datos_documento(guardado_path, nombre_limpio, clase_predicha)
     campos['origen_dominio'] = info_dom['origen_dominio']
@@ -2604,7 +2593,7 @@ def proyecto_asset(filename):
 
 @app.route('/api/metricas_modelo', methods=['GET'])
 def api_metricas_modelo():
-    """Devuelve las métricas completas de entrenamiento, validación, test (Corte 2) y arquitectura CNN."""
+    """Devuelve las métricas completas de entrenamiento, validación, test y arquitectura CNN calculadas dinámicamente desde los pesos reales."""
     metrics_file = os.path.join(BASE_DIR, 'training_metrics.json')
     if not os.path.exists(metrics_file):
         metrics_file = os.path.abspath(os.path.join(BASE_DIR, '..', 'Proyecto', 'training_metrics.json'))
@@ -2615,25 +2604,217 @@ def api_metricas_modelo():
                 data = json.load(f)
         except Exception:
             pass
+
+    # Calcular parámetros reales directamente desde los tensores de pesos del modelo entrenado
+    npz_path = os.path.join(BASE_DIR, 'model_weights.npz')
+    param_counts = {}
+    shapes_dict = {}
+    total_params = 0
+    if os.path.exists(npz_path):
+        try:
+            w_npz = np.load(npz_path)
+            for layer_prefix in ['conv1', 'conv2', 'conv3', 'conv4', 'dense1', 'dense2']:
+                w_arr = w_npz.get(f'w_{layer_prefix}')
+                if w_arr is None:
+                    w_arr = w_npz.get(f'{layer_prefix}_w')
+                b_arr = w_npz.get(f'b_{layer_prefix}')
+                if b_arr is None:
+                    b_arr = w_npz.get(f'{layer_prefix}_b')
+                if w_arr is not None and b_arr is not None:
+                    p_cnt = int(w_arr.size + b_arr.size)
+                    param_counts[layer_prefix] = p_cnt
+                    shapes_dict[layer_prefix] = tuple(int(x) for x in w_arr.shape)
+                    total_params += p_cnt
+        except Exception:
+            pass
+
+    # Contar dinámicamente los archivos del conjunto Test no visto
+    test_dir = os.path.join(BASE_DIR, 'documentos_de_prueba')
+    test_count = 0
+    if os.path.exists(test_dir):
+        for root, _, files in os.walk(test_dir):
+            test_count += sum(1 for fn in files if fn.lower().endswith(('.png', '.jpg', '.jpeg')))
+
+    cm = data.get('confusion_matrix', [])
+    if not test_count and cm:
+        test_count = int(sum(sum(row) for row in cm))
+
+    raw_test_acc = float(data.get('test_accuracy', 0.0))
+    test_acc = raw_test_acc / 100.0 if raw_test_acc > 1.0 else raw_test_acc
+    test_err = round(1.0 - test_acc, 6) if test_acc > 0 else 0.0
+    val_loss_list = data.get('val_loss', [])
+    test_loss = float(data.get('test_loss', val_loss_list[-1] if val_loss_list else 0.0))
+    aciertos_test = int(sum(cm[i][i] for i in range(len(cm)))) if cm else int(round(test_acc * test_count))
+
+    epocas_lista = []
+    acc_hist = data.get('accuracy', [])
+    loss_hist = data.get('loss', [])
+    val_acc_hist = data.get('val_accuracy', [])
+    val_loss_hist = data.get('val_loss', [])
+    for idx in range(len(acc_hist)):
+        tr_a = float(acc_hist[idx])
+        va_a = float(val_acc_hist[idx]) if idx < len(val_acc_hist) else 0.0
+        epocas_lista.append({
+            'epoca': idx + 1,
+            'train_acc': round(tr_a, 6),
+            'train_err': round(1.0 - tr_a, 6),
+            'train_loss': float(loss_hist[idx]) if idx < len(loss_hist) else 0.0,
+            'val_acc': round(va_a, 6),
+            'val_err': round(1.0 - va_a, 6),
+            'val_loss': float(val_loss_hist[idx]) if idx < len(val_loss_hist) else 0.0,
+        })
+
     arquitectura = [
         {"capa": "Input", "tipo": "InputLayer", "forma": "(160, 160, 3)", "parametros": 0, "detalle": "Imagen RGB 160x160 px"},
         {"capa": "data_augmentation", "tipo": "Sequential", "forma": "(160, 160, 3)", "parametros": 0, "detalle": "RandomRotation(3%), RandomZoom(3%), RandomTranslation(2%)"},
         {"capa": "normalizacion", "tipo": "Rescaling", "forma": "(160, 160, 3)", "parametros": 0, "detalle": "Escalamiento [0, 255] -> [0.0, 1.0]"},
-        {"capa": "conv1 + pool1", "tipo": "Conv2D(32, 3x3, ReLU) + MaxPool(2x2)", "forma": "(80, 80, 32)", "parametros": 896, "detalle": "Detección de bordes, márgenes y líneas"},
-        {"capa": "conv2 + pool2", "tipo": "Conv2D(64, 3x3, ReLU) + MaxPool(2x2)", "forma": "(40, 40, 64)", "parametros": 18496, "detalle": "Detección de tablas, cajas y encabezados"},
-        {"capa": "conv3 + pool3", "tipo": "Conv2D(128, 3x3, ReLU) + MaxPool(2x2)", "forma": "(20, 20, 128)", "parametros": 73856, "detalle": "Patrones estructurales y bloques de texto"},
-        {"capa": "conv4 + pool4", "tipo": "Conv2D(128, 3x3, ReLU) + MaxPool(2x2)", "forma": "(10, 10, 128)", "parametros": 147584, "detalle": "Características semánticas de alto nivel"},
+        {"capa": "conv1 + pool1", "tipo": f"Conv2D{shapes_dict.get('conv1', (3,3,3,32))} + MaxPool(2x2)", "forma": "(80, 80, 32)", "parametros": param_counts.get('conv1', 0), "detalle": "Detección de bordes, márgenes y líneas"},
+        {"capa": "conv2 + pool2", "tipo": f"Conv2D{shapes_dict.get('conv2', (3,3,32,64))} + MaxPool(2x2)", "forma": "(40, 40, 64)", "parametros": param_counts.get('conv2', 0), "detalle": "Detección de tablas, cajas y encabezados"},
+        {"capa": "conv3 + pool3", "tipo": f"Conv2D{shapes_dict.get('conv3', (3,3,64,128))} + MaxPool(2x2)", "forma": "(20, 20, 128)", "parametros": param_counts.get('conv3', 0), "detalle": "Patrones estructurales y bloques de texto"},
+        {"capa": "conv4 + pool4", "tipo": f"Conv2D{shapes_dict.get('conv4', (3,3,128,128))} + MaxPool(2x2)", "forma": "(10, 10, 128)", "parametros": param_counts.get('conv4', 0), "detalle": "Características semánticas de alto nivel"},
         {"capa": "flatten + dropout", "tipo": "Flatten + Dropout(0.4)", "forma": "(12800,)", "parametros": 0, "detalle": "Vectorización y regularización anti-overfitting"},
-        {"capa": "densa_oculta", "tipo": "Dense(256, ReLU)", "forma": "(256,)", "parametros": 3277056, "detalle": "Representación latente densa"},
-        {"capa": "salida_probabilidades", "tipo": "Dense(4, Softmax)", "forma": "(4,)", "parametros": 1028, "detalle": "Distribución de probabilidad en 4 clases"}
+        {"capa": "densa_oculta", "tipo": f"Dense{shapes_dict.get('dense1', (12800, 256))}", "forma": "(256,)", "parametros": param_counts.get('dense1', 0), "detalle": "Representación latente densa"},
+        {"capa": "salida_probabilidades", "tipo": f"Dense{shapes_dict.get('dense2', (256, 4))} Softmax", "forma": "(4,)", "parametros": param_counts.get('dense2', 0), "detalle": "Distribución de probabilidad en 4 clases"}
     ]
+
     return jsonify({
         'success': True,
         'metricas': data,
-        'total_parametros': 3518916,
+        'resumen_evaluacion': {
+            'tasa_acierto_proporcion': round(test_acc, 4),
+            'tasa_acierto_porcentaje': round(test_acc * 100.0, 2),
+            'meta_acierto': 0.985,
+            'cumple_acierto': bool(test_acc > 0.985),
+            'tasa_error_proporcion': round(test_err, 4),
+            'tasa_error_porcentaje': round(test_err * 100.0, 2),
+            'meta_error': 0.03,
+            'cumple_error': bool(test_err <= 0.03),
+            'test_loss': test_loss,
+            'aciertos_test': aciertos_test,
+            'total_test': test_count,
+            'epocas_entrenadas': len(epocas_lista)
+        },
+        'historial_epocas': epocas_lista,
+        'total_parametros': total_params,
         'entrenado_desde_cero': True,
-        'particiones': {'train': 1872, 'val': 400, 'test_no_vistos': 404, 'total': 2676},
         'arquitectura': arquitectura
+    })
+
+
+@app.route('/api/evaluar_test', methods=['GET', 'POST'])
+def api_evaluar_test():
+    """
+    Ejecuta inferencia neuronal en vivo (forward pass real de la CNN) sobre las imágenes
+    no vistas del conjunto de Test en Web/documentos_de_prueba/ sin nada quemado en código.
+    Verifica empíricamente en tiempo real:
+      - Tasa de Acierto > 0.985
+      - Tasa de Error <= 0.03
+    """
+    import time as _time
+    t0 = _time.perf_counter()
+    test_dir = os.path.join(BASE_DIR, 'documentos_de_prueba')
+    if not os.path.exists(test_dir):
+        return jsonify({'success': False, 'error': 'No se encontró el directorio documentos_de_prueba'}), 404
+
+    model_instance = get_model()
+    n_classes = len(CLASSES)
+    cm = [[0 for _ in range(n_classes)] for _ in range(n_classes)]
+    por_clase = {
+        cls_name: {'nombre_es': TRADUCCION_CLASES.get(cls_name, cls_name), 'total': 0, 'aciertos': 0, 'errores': 0}
+        for cls_name in CLASSES
+    }
+
+    from concurrent.futures import ThreadPoolExecutor
+    tasks_to_load = []
+    for root, _, files in os.walk(test_dir):
+        for fn in sorted(files):
+            if not fn.lower().endswith(('.png', '.jpg', '.jpeg')):
+                continue
+            fn_low = fn.lower()
+            rel_dir = os.path.basename(root)
+            if rel_dir in CLASSES:
+                idx_cls = CLASSES.index(rel_dir)
+            elif fn_low.startswith('stockreport') or 'inventory' in fn_low:
+                idx_cls = 0  # Inventory Report
+            elif fn_low.startswith('purchase'):
+                idx_cls = 1  # PurchaseOrders
+            elif fn_low.startswith('order') or fn_low.startswith('shipping'):
+                idx_cls = 2  # Shipping orders
+            elif fn_low.startswith('invoice'):
+                idx_cls = 3  # invoices
+            else:
+                continue
+            tasks_to_load.append((os.path.join(root, fn), idx_cls))
+            por_clase[CLASSES[idx_cls]]['total'] += 1
+
+    total_eval = len(tasks_to_load)
+    if total_eval == 0:
+        return jsonify({'success': False, 'error': 'No hay imágenes en documentos_de_prueba'}), 404
+
+    def _load_one(item):
+        fpath, idx_cls = item
+        with Image.open(fpath) as im:
+            arr = np.asarray(im.convert('RGB').resize((160, 160)), dtype=np.float32)
+        return arr, idx_cls
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        loaded = list(ex.map(_load_one, tasks_to_load))
+
+    X_all = np.stack([it[0] for it in loaded], axis=0)
+    y_true = np.array([it[1] for it in loaded], dtype=np.int64)
+
+    # Inferencia por lotes de 8 (óptimo para caché L3 y multihilo OpenBLAS) mediante forward propagation real
+    batch_size = 8
+    probs_list = [model_instance.predict(X_all[i:i + batch_size], verbose=0) for i in range(0, total_eval, batch_size)]
+    probs_all = np.vstack(probs_list)
+    y_pred = np.argmax(probs_all, axis=1)
+    max_confs = np.max(probs_all, axis=1)
+
+    # Calcular pérdida Sparse Categorical Crossentropy real en vivo
+    eps = 1e-12
+    true_probs = np.clip(probs_all[np.arange(total_eval), y_true], eps, 1.0)
+    live_loss = float(-np.mean(np.log(true_probs)))
+
+    aciertos = int(np.sum(y_pred == y_true))
+    errores = int(total_eval - aciertos)
+    tasa_acierto = float(aciertos / total_eval)
+    tasa_error = float(errores / total_eval)
+    confianza_media = float(np.mean(max_confs) * 100.0)
+
+    for yt, yp in zip(y_true, y_pred):
+        cm[int(yt)][int(yp)] += 1
+        cname = CLASSES[int(yt)]
+        if int(yt) == int(yp):
+            por_clase[cname]['aciertos'] += 1
+        else:
+            por_clase[cname]['errores'] += 1
+
+    for cname, info in por_clase.items():
+        tot_c = max(1, info['total'])
+        info['tasa_acierto'] = round(info['aciertos'] / tot_c, 4)
+        info['tasa_error'] = round(info['errores'] / tot_c, 4)
+
+    elapsed_ms = round((_time.perf_counter() - t0) * 1000.0, 1)
+
+    return jsonify({
+        'success': True,
+        'total_evaluados': total_eval,
+        'aciertos': aciertos,
+        'errores': errores,
+        'tasa_acierto': round(tasa_acierto, 4),
+        'tasa_acierto_pct': round(tasa_acierto * 100.0, 2),
+        'tasa_error': round(tasa_error, 4),
+        'tasa_error_pct': round(tasa_error * 100.0, 2),
+        'live_loss': live_loss,
+        'confianza_media_pct': round(confianza_media, 2),
+        'cumple_meta_acierto': bool(tasa_acierto > 0.985),
+        'cumple_meta_error': bool(tasa_error <= 0.03),
+        'meta_acierto': 0.985,
+        'meta_error': 0.03,
+        'confusion_matrix': cm,
+        'clases': CLASSES,
+        'por_clase': por_clase,
+        'tiempo_inferencia_ms': elapsed_ms
     })
 
 
