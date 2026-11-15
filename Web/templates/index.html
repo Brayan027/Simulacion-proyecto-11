@@ -540,13 +540,19 @@
               </button>
             </div>
 
-            <!-- Notificación del Resultado de Q-Learning -->
-            <div id="alertaResultadoRLMain" class="hidden p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-xs text-emerald-900 space-y-1">
-              <div class="font-bold flex items-center gap-1.5 text-emerald-800">
-                <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i>
-                <span id="tituloResultadoRLMain">Política RL Actualizada</span>
+            <!-- Notificación del Resultado de Q-Learning y Explicación de Aprendizaje -->
+            <div id="alertaResultadoRLMain" class="hidden p-3.5 bg-emerald-50 border border-emerald-300 rounded-xl text-xs text-emerald-950 space-y-2 shadow-xs">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="font-extrabold flex items-center gap-1.5 text-emerald-900">
+                  <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600 shrink-0"></i>
+                  <span id="tituloResultadoRLMain">Política RL Actualizada</span>
+                </div>
+                <span id="tiempoRespuestaRLMain" class="text-[10px] mono font-bold px-2 py-0.5 bg-white/90 text-emerald-700 border border-emerald-200 rounded-md"></span>
               </div>
-              <p id="detalleFormulaRLMain" class="mono text-[11px] text-emerald-700"></p>
+              <p id="explicacionAprendizajeRLMain" class="text-[11px] text-slate-700 leading-relaxed bg-white/80 p-2.5 rounded-lg border border-emerald-200/80"></p>
+              <p id="detalleFormulaRLMain" class="mono text-[11px] text-emerald-800 font-semibold"></p>
+              <div id="chipsRankingPolRLMain" class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-1"></div>
+              <div id="accionOpcionalRegenerarRLMain" class="hidden pt-1"></div>
             </div>
           </div>
 
@@ -1107,11 +1113,11 @@
               </div>
               <div class="flex items-center gap-2">
                 <input type="text" id="inputComentarioRLModal" placeholder="Comentario u observación para ajustar el Agente RL..." class="flex-1 text-[11px] px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
-                <button type="button" onclick="enviarFeedbackRL('modal')" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] rounded-lg">
+                <button type="button" id="btnEnviarFeedbackModal" onclick="enviarFeedbackRL('modal')" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] rounded-lg">
                   Enviar Feedback RL
                 </button>
               </div>
-              <div id="alertaResultadoRLModal" class="hidden p-2 bg-emerald-50 border border-emerald-300 rounded-lg text-[11px] text-emerald-900 mono"></div>
+              <div id="alertaResultadoRLModal" class="hidden p-2.5 bg-emerald-50 border border-emerald-300 rounded-lg text-[11px] text-emerald-950 space-y-1.5"></div>
             </div>
           </div>
 
@@ -2559,19 +2565,33 @@
       enviarFeedbackRL(scope, estrellas);
     }
 
-    async function enviarFeedbackRL(scope, estrellasOverride = null) {
+    async function enviarFeedbackRL(scope, estrellasOverride = null, forzarRegenerar = false, comentarioOverride = null) {
       const targetData = (scope === 'modal') ? modalObjetoActual : ultimoResultado;
       if (!targetData) return;
 
+      const tInicio = performance.now();
       const estrellas = estrellasOverride !== null ? estrellasOverride : (scope === 'modal' ? estrellasSeleccionadasModal : estrellasSeleccionadasMain);
       const inputCom = document.getElementById(scope === 'modal' ? 'inputComentarioRLModal' : 'inputComentarioRLMain');
-      const comentario = inputCom ? inputCom.value.trim() : '';
+      const comentario = comentarioOverride !== null ? comentarioOverride : (inputCom ? inputCom.value.trim() : '');
       const selectAcc = document.getElementById(scope === 'modal' ? 'selectAccionRLModal' : 'selectAccionRLMain');
       const accionPreferida = selectAcc ? selectAcc.value : '';
 
       const llmActual = targetData.llm_recomendacion || (targetData.detalles && targetData.detalles.llm_recomendacion) || {};
       const rlDec = llmActual.rl_decision || {};
       const datosExt = targetData.datos_extraidos || (targetData.detalles && targetData.detalles.datos_extraidos) || {};
+
+      // Solo regeneramos sincrónicamente si la calificación es negativa (<= 2★), o 3★ con corrección, o si el usuario pidió regenerar explícitamente.
+      // Si es positiva (4★ o 5★, ej. "Bien clasificado"), guardamos en Q-Learning + Memoria RLHF al instante (< 50ms) sin bloquear.
+      const vaARegenerar = Boolean(forzarRegenerar || estrellas <= 2 || (estrellas === 3 && comentario.length > 0) || accionPreferida);
+
+      const btnSend = document.getElementById(scope === 'modal' ? 'btnEnviarFeedbackModal' : 'btnEnviarFeedbackMain');
+      const btnOrigHtml = btnSend ? btnSend.innerHTML : '';
+      if (btnSend) {
+        btnSend.disabled = true;
+        btnSend.innerHTML = vaARegenerar
+          ? `<span>⏳ Reajustando política y regenerando...</span>`
+          : `<span>⏳ Entrenando Agente RL...</span>`;
+      }
 
       const payload = {
         documento_id: targetData.id,
@@ -2585,7 +2605,7 @@
         texto_recomendacion: llmActual.texto || '',
         datos_extraidos: datosExt,
         accion_preferida: accionPreferida,
-        regenerar: (estrellas <= 2 || comentario.length > 0)
+        regenerar: vaARegenerar
       };
 
       try {
@@ -2595,35 +2615,113 @@
           body: JSON.stringify(payload)
         });
         const resp = await res.json();
+        const elapsedMs = Math.round(performance.now() - tInicio);
+
         if (resp.success) {
           const upd = resp.rl_update;
           if (resp.nueva_recomendacion) {
             targetData.llm_recomendacion = resp.nueva_recomendacion;
             if (targetData.detalles) targetData.detalles.llm_recomendacion = resp.nueva_recomendacion;
             renderLLMRecomendacion(scope, targetData);
+          } else if (targetData.llm_recomendacion) {
+            targetData.llm_recomendacion.calificacion_usuario = upd.calificacion_estrellas;
+            targetData.llm_recomendacion.recompensa_rl = upd.recompensa;
+            if (targetData.llm_recomendacion.rl_decision && upd.accion_calificada === targetData.llm_recomendacion.rl_decision.accion_id) {
+              targetData.llm_recomendacion.rl_decision.q_valor_actual = upd.q_nuevo;
+            }
+            const qStrUpd = (upd.q_nuevo >= 0 ? '+' : '') + Number(upd.q_nuevo).toFixed(3);
+            const polBadgeEl = document.getElementById(scope === 'modal' ? 'modalLlmPoliticaBadge' : 'llmTextoPoliticaRL');
+            if (polBadgeEl) {
+              polBadgeEl.textContent = `Política RL: ${upd.accion_calificada_nombre} (Q: ${qStrUpd})`;
+            }
           }
 
           const msgFormula = `${upd.formula_aplicada} | Recompensa r = ${upd.recompensa >= 0 ? '+' : ''}${upd.recompensa} (${upd.calificacion_estrellas}★)` +
-            (resp.nueva_recomendacion ? ` ➔ Recomendación ajustada con política '${resp.nueva_recomendacion.rl_decision.accion_nombre}'.` : ` ➔ Política óptima: ${upd.politica_optima_nombre}`);
+            (resp.nueva_recomendacion ? ` ➔ Recomendación regenerada con '${resp.nueva_recomendacion.rl_decision.accion_nombre}'.` : ` ➔ Política óptima π*(s): ${upd.politica_optima_nombre}`);
+
+          const nombresCortosPol = {
+            auditoria_contable: 'Auditoría Contable',
+            operaciones_logistica: 'Gestión Operativa',
+            financiero_tesoreria: 'Financiero / Tesorería',
+            control_interno_riesgos: 'Control Interno'
+          };
 
           if (scope === 'modal') {
             const boxM = document.getElementById('alertaResultadoRLModal');
             if (boxM) {
               boxM.classList.remove('hidden');
-              boxM.textContent = `Q-Learning actualizado: ${msgFormula}`;
+              boxM.innerHTML = `
+                <div class="font-extrabold text-emerald-900 flex items-center justify-between">
+                  <span>✅ Aprendizaje RL aplicado (${upd.calificacion_estrellas}★)</span>
+                  <span class="mono text-[10px] text-emerald-700">${elapsedMs} ms</span>
+                </div>
+                <p class="text-[11px] text-slate-700">${upd.explicacion_aprendizaje || ''}</p>
+                <p class="mono text-[10px] text-emerald-800 font-bold">${msgFormula}</p>
+              `;
             }
           } else {
             const boxMain = document.getElementById('alertaResultadoRLMain');
             const titMain = document.getElementById('tituloResultadoRLMain');
+            const expMain = document.getElementById('explicacionAprendizajeRLMain');
             const detMain = document.getElementById('detalleFormulaRLMain');
+            const tBadge = document.getElementById('tiempoRespuestaRLMain');
+            const chipsBox = document.getElementById('chipsRankingPolRLMain');
+            const opcBox = document.getElementById('accionOpcionalRegenerarRLMain');
             const badgeFb = document.getElementById('badgeEstadoFeedbackMain');
+
             if (boxMain) boxMain.classList.remove('hidden');
+            if (tBadge) tBadge.textContent = `⚡ Procesado en ${elapsedMs} ms`;
             if (titMain) {
               titMain.textContent = resp.nueva_recomendacion
                 ? `Agente RL reajustó la política y regeneró la recomendación (${upd.calificacion_estrellas}★)`
-                : `Matriz Q(s, a) actualizada con éxito (${upd.calificacion_estrellas}★)`;
+                : `¡El Agente RL aprendió de tu calificación! (${upd.calificacion_estrellas}★ | Episodio #${upd.total_episodios_estado || 1} en ${upd.estado_es})`;
+            }
+            if (expMain) {
+              expMain.innerHTML = `<strong>¿Qué aprendió el modelo?:</strong> ${upd.explicacion_aprendizaje || 'Se actualizó el valor esperado Q(s,a) para priorizar esta política en futuras predicciones de esta clase.'}`;
             }
             if (detMain) detMain.textContent = msgFormula;
+
+            if (chipsBox && upd.q_valores_estado) {
+              chipsBox.innerHTML = '';
+              Object.keys(nombresCortosPol).forEach(accKey => {
+                const qv = Number(upd.q_valores_estado[accKey] || 0.5);
+                const prob = upd.probabilidades_politica ? upd.probabilidades_politica[accKey] : '';
+                const esOpt = (accKey === upd.politica_optima_actual);
+                const esCal = (accKey === upd.accion_calificada);
+                const d = document.createElement('div');
+                d.className = `p-2 rounded-lg border text-[10px] ${esOpt ? 'bg-emerald-100/90 border-emerald-400 text-emerald-950 font-bold' : 'bg-white/90 border-slate-200 text-slate-700'}`;
+                d.innerHTML = `
+                  <div class="flex items-center justify-between gap-1">
+                    <span class="truncate">${esOpt ? '★ ' : ''}${nombresCortosPol[accKey]}</span>
+                    ${esCal ? `<span class="text-[9px] px-1 bg-amber-100 text-amber-800 rounded font-bold">${upd.delta_q >= 0 ? '+' : ''}${Number(upd.delta_q).toFixed(3)}</span>` : ''}
+                  </div>
+                  <div class="mono text-[11px] mt-0.5 flex items-center justify-between">
+                    <strong>Q = ${qv >= 0 ? '+' : ''}${qv.toFixed(3)}</strong>
+                    ${prob ? `<span class="text-[9px] text-slate-500">${prob}%</span>` : ''}
+                  </div>
+                `;
+                chipsBox.appendChild(d);
+              });
+            }
+
+            if (opcBox) {
+              if (comentario && !resp.nueva_recomendacion) {
+                const comEsc = comentario.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                opcBox.classList.remove('hidden');
+                opcBox.innerHTML = `
+                  <div class="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/80 border border-indigo-200 rounded-lg px-3 py-1.5 text-[11px] text-indigo-950">
+                    <span>💡 Tu comentario ya quedó guardado para próximos documentos. ¿Deseas reescribir también el texto actual con esta observación?</span>
+                    <button type="button" onclick="enviarFeedbackRL('main', ${estrellas}, true, '${comEsc}')" class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-md text-[10px] shrink-0 transition">
+                      🔄 Reescribir texto actual con mi comentario
+                    </button>
+                  </div>
+                `;
+              } else {
+                opcBox.classList.add('hidden');
+                opcBox.innerHTML = '';
+              }
+            }
+
             if (badgeFb) {
               badgeFb.className = "text-[10px] font-bold px-2.5 py-1 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg";
               badgeFb.textContent = `Feedback registrado: ${upd.calificacion_estrellas}★ (r = ${upd.recompensa >= 0 ? '+' : ''}${upd.recompensa})`;
@@ -2631,11 +2729,21 @@
           }
 
           if (inputCom) inputCom.value = '';
-          cargarRLStats();
-          cargarHistorial();
+          // Actualizar la tabla Q(s,a) y KPIs al instante usando resp.rl_stats sin hacer otra petición HTTP
+          if (resp.rl_stats) {
+            renderizarDatosRLStats(resp.rl_stats);
+          } else {
+            cargarRLStats();
+          }
         }
       } catch (err) {
         console.error("Error enviando feedback RL:", err);
+      } finally {
+        if (btnSend) {
+          btnSend.disabled = false;
+          btnSend.innerHTML = btnOrigHtml;
+          if (window.lucide) lucide.createIcons();
+        }
       }
     }
 
@@ -2675,90 +2783,94 @@
       }
     }
 
+    function renderizarDatosRLStats(data) {
+      if (!data) return;
+      document.getElementById('rlStatEpisodios').textContent = data.total_episodios;
+      document.getElementById('rlStatEstrellas').textContent = `${Number(data.promedio_estrellas).toFixed(1)} ★ / 5.0`;
+      document.getElementById('rlStatAceptacion').textContent = `${data.tasa_aceptacion} aceptadas`;
+      const recVal = Number(data.recompensa_promedio);
+      document.getElementById('rlStatRecompensa').textContent = `${recVal >= 0 ? '+' : ''}${recVal.toFixed(3)}`;
+      const hScore = document.getElementById('headerRLScore');
+      if (hScore) hScore.textContent = `${Number(data.promedio_estrellas).toFixed(1)}★ (${data.total_episodios} feedbacks)`;
+      if (data.modelo_llm_activo) {
+        const modEl = document.getElementById('rlKpiModeloNombre');
+        if (modEl) modEl.textContent = data.modelo_llm_activo;
+      }
+
+      // Renderizar Matriz Q(s, a)
+      const qBody = document.getElementById('rlQTableBody');
+      if (qBody && data.matriz_q) {
+        qBody.innerHTML = '';
+        const colsOrder = ['auditoria_contable', 'operaciones_logistica', 'financiero_tesoreria', 'control_interno_riesgos'];
+        data.matriz_q.forEach(row => {
+          const tr = document.createElement('tr');
+          tr.className = "hover:bg-slate-50 transition";
+          let celdasAcciones = '';
+          colsOrder.forEach(accKey => {
+            const info = row.acciones[accKey] || { q_valor: 0.5, es_optima: false, visitas: 1 };
+            const qv = Number(info.q_valor);
+            const badgeCls = info.es_optima
+              ? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-extrabold'
+              : (qv < 0 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-100 text-slate-700 border-slate-200');
+            celdasAcciones += `
+              <td class="py-2 px-2 text-center">
+                <span class="inline-block mono text-[11px] px-2 py-0.5 rounded-md border ${badgeCls}">
+                  ${qv >= 0 ? '+' : ''}${qv.toFixed(3)}
+                </span>
+              </td>
+            `;
+          });
+
+          tr.innerHTML = `
+            <td class="py-2.5 px-3 font-bold text-slate-800">${row.estado_nombre}</td>
+            ${celdasAcciones}
+            <td class="py-2.5 px-3">
+              <span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md font-bold text-[10px] inline-flex items-center gap-1">
+                ★ ${row.mejor_accion_nombre}
+              </span>
+            </td>
+          `;
+          qBody.appendChild(tr);
+        });
+      }
+
+      // Renderizar Historial de Feedbacks RL
+      const fbList = document.getElementById('rlFeedbackList');
+      if (fbList && data.historial_feedback) {
+        fbList.innerHTML = '';
+        if (data.historial_feedback.length === 0) {
+          fbList.innerHTML = `<div class="p-4 text-center text-slate-400 italic">No hay calificaciones registradas.</div>`;
+        } else {
+          data.historial_feedback.forEach(fb => {
+            const div = document.createElement('div');
+            const isPos = fb.recompensa >= 0;
+            div.className = "p-2.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1";
+            const starsStr = '★'.repeat(fb.estrellas) + '☆'.repeat(5 - fb.estrellas);
+            div.innerHTML = `
+              <div class="flex items-center justify-between gap-2">
+                <span class="font-bold text-slate-800 truncate text-[11px]">${fb.tipo_documento} (${fb.nombre_archivo})</span>
+                <span class="text-amber-500 font-bold mono text-[11px] shrink-0">${starsStr}</span>
+              </div>
+              <div class="flex items-center justify-between text-[10px] text-slate-600 mono">
+                <span class="truncate">Política: <strong>${fb.accion_nombre}</strong></span>
+                <span class="font-bold ${isPos ? 'text-emerald-700' : 'text-rose-600'}">
+                  r=${fb.recompensa >= 0 ? '+' : ''}${Number(fb.recompensa).toFixed(2)} | Q: ${Number(fb.q_anterior).toFixed(3)}➔${Number(fb.q_nuevo).toFixed(3)}
+                </span>
+              </div>
+              ${fb.comentario ? `<p class="text-[10px] text-slate-500 italic truncate">"${fb.comentario}"</p>` : ''}
+            `;
+            fbList.appendChild(div);
+          });
+        }
+      }
+    }
+
     async function cargarRLStats() {
       try {
         const res = await fetch('api/rl/stats');
         const data = await res.json();
         if (!data.success) return;
-
-        document.getElementById('rlStatEpisodios').textContent = data.total_episodios;
-        document.getElementById('rlStatEstrellas').textContent = `${Number(data.promedio_estrellas).toFixed(1)} ★ / 5.0`;
-        document.getElementById('rlStatAceptacion').textContent = `${data.tasa_aceptacion} aceptadas`;
-        const recVal = Number(data.recompensa_promedio);
-        document.getElementById('rlStatRecompensa').textContent = `${recVal >= 0 ? '+' : ''}${recVal.toFixed(3)}`;
-        const hScore = document.getElementById('headerRLScore');
-        if (hScore) hScore.textContent = `${Number(data.promedio_estrellas).toFixed(1)}★ (${data.total_episodios} feedbacks)`;
-        if (data.modelo_llm_activo) {
-          const modEl = document.getElementById('rlKpiModeloNombre');
-          if (modEl) modEl.textContent = data.modelo_llm_activo;
-        }
-
-        // Renderizar Matriz Q(s, a)
-        const qBody = document.getElementById('rlQTableBody');
-        if (qBody && data.matriz_q) {
-          qBody.innerHTML = '';
-          const colsOrder = ['auditoria_contable', 'operaciones_logistica', 'financiero_tesoreria', 'control_interno_riesgos'];
-          data.matriz_q.forEach(row => {
-            const tr = document.createElement('tr');
-            tr.className = "hover:bg-slate-50 transition";
-            let celdasAcciones = '';
-            colsOrder.forEach(accKey => {
-              const info = row.acciones[accKey] || { q_valor: 0.5, es_optima: false, visitas: 1 };
-              const qv = Number(info.q_valor);
-              const badgeCls = info.es_optima
-                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-extrabold'
-                : (qv < 0 ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-100 text-slate-700 border-slate-200');
-              celdasAcciones += `
-                <td class="py-2 px-2 text-center">
-                  <span class="inline-block mono text-[11px] px-2 py-0.5 rounded-md border ${badgeCls}">
-                    ${qv >= 0 ? '+' : ''}${qv.toFixed(3)}
-                  </span>
-                </td>
-              `;
-            });
-
-            tr.innerHTML = `
-              <td class="py-2.5 px-3 font-bold text-slate-800">${row.estado_nombre}</td>
-              ${celdasAcciones}
-              <td class="py-2.5 px-3">
-                <span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md font-bold text-[10px] inline-flex items-center gap-1">
-                  ★ ${row.mejor_accion_nombre}
-                </span>
-              </td>
-            `;
-            qBody.appendChild(tr);
-          });
-        }
-
-        // Renderizar Historial de Feedbacks RL
-        const fbList = document.getElementById('rlFeedbackList');
-        if (fbList && data.historial_feedback) {
-          fbList.innerHTML = '';
-          if (data.historial_feedback.length === 0) {
-            fbList.innerHTML = `<div class="p-4 text-center text-slate-400 italic">No hay calificaciones registradas.</div>`;
-          } else {
-            data.historial_feedback.forEach(fb => {
-              const div = document.createElement('div');
-              const isPos = fb.recompensa >= 0;
-              div.className = "p-2.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1";
-              const starsStr = '★'.repeat(fb.estrellas) + '☆'.repeat(5 - fb.estrellas);
-              div.innerHTML = `
-                <div class="flex items-center justify-between gap-2">
-                  <span class="font-bold text-slate-800 truncate text-[11px]">${fb.tipo_documento} (${fb.nombre_archivo})</span>
-                  <span class="text-amber-500 font-bold mono text-[11px] shrink-0">${starsStr}</span>
-                </div>
-                <div class="flex items-center justify-between text-[10px] text-slate-600 mono">
-                  <span class="truncate">Política: <strong>${fb.accion_nombre}</strong></span>
-                  <span class="font-bold ${isPos ? 'text-emerald-700' : 'text-rose-600'}">
-                    r=${fb.recompensa >= 0 ? '+' : ''}${Number(fb.recompensa).toFixed(2)} | Q: ${Number(fb.q_anterior).toFixed(3)}➔${Number(fb.q_nuevo).toFixed(3)}
-                  </span>
-                </div>
-                ${fb.comentario ? `<p class="text-[10px] text-slate-500 italic truncate">"${fb.comentario}"</p>` : ''}
-              `;
-              fbList.appendChild(div);
-            });
-          }
-        }
+        renderizarDatosRLStats(data);
       } catch (e) {
         console.error("Error cargando RL stats:", e);
       }

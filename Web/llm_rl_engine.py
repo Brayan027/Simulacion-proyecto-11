@@ -103,6 +103,8 @@ class RLRecommendationAgent:
         self.q_table = {}
         self.visits = {}
         self.cum_reward = {}
+        self.learned_comments = {s: [] for s in ESTADOS_DOCUMENTO}
+        self.episode_counts = {s: 0 for s in ESTADOS_DOCUMENTO}
         self._init_tables()
         self._load_q_table()
 
@@ -334,18 +336,96 @@ class RLRecommendationAgent:
         }
         return estrellas, mapa_recompensa[estrellas]
 
+    @staticmethod
+    def _detectar_intencion_comentario(comentario):
+        """
+        Analiza semánticamente el comentario del usuario para identificar si solicita
+        reforzar una política específica del espacio de acciones A.
+        """
+        if not comentario or not comentario.strip():
+            return None
+        txt = comentario.lower()
+        reglas = {
+            'financiero_tesoreria': ['financier', 'tesorer', 'liquidez', 'flujo de caja', 'descuento', 'pago', 'capital', 'presupuesto', 'rentabilidad'],
+            'operaciones_logistica': ['logístic', 'logistic', 'bodega', 'almacén', 'almacen', 'stock', 'inventario', 'despacho', 'envío', 'envio', 'entrega', 'transporte', 'recepción'],
+            'control_interno_riesgos': ['control interno', 'riesgo', 'fraude', '3-way', 'conciliación', 'conciliacion', 'duplicad', 'anomal', 'bloqueo', 'cumplimiento'],
+            'auditoria_contable': ['contable', 'tributari', 'iva', 'retención', 'retencion', 'impuesto', 'fiscal', 'asiento', 'causación', 'causacion', 'dian', 'factura']
+        }
+        mejor_acc = None
+        max_hits = 0
+        for acc_id, kw_list in reglas.items():
+            hits = sum(1 for kw in kw_list if kw in txt)
+            if hits > max_hits:
+                max_hits = hits
+                mejor_acc = acc_id
+        return mejor_acc if max_hits > 0 else None
+
+    def obtener_memoria_aprendizaje(self, clase_raw, limit=4):
+        """
+        Recupera la experiencia aprendida por el Agente RL (RLHF) a partir de los feedbacks
+        y comentarios previos del usuario para el estado/categoría documental `s`.
+        Esta memoria se inyecta en el Prompt del LLM en futuras predicciones.
+        """
+        s = self.normalize_state(clase_raw)
+        tipo_es = TRADUCCION_ESTADOS.get(s, s)
+        q_vals = self.q_table.get(s, Q_INIT_PRIOR['invoices']).copy()
+        mejor_accion_id = max(LISTA_ACCIONES, key=lambda act: q_vals.get(act, 0.5))
+
+        total_fb_estado = 0
+        comentarios_aprendidos = []
+        acciones_rechazadas = []
+
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10)
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM rl_feedback_historial WHERE estado_clase = ?", (s,))
+            row_cnt = cur.fetchone()
+            if row_cnt:
+                total_fb_estado = int(row_cnt[0])
+
+            cur.execute('''
+                SELECT accion_estrategia, calificacion_estrellas, recompensa, comentario
+                FROM rl_feedback_historial
+                WHERE estado_clase = ?
+                ORDER BY id DESC LIMIT ?
+            ''', (s, limit * 2))
+            for acc_id, stars, rew, com in cur.fetchall():
+                acc_nom = ACCIONES_RL.get(acc_id, {}).get('nombre', acc_id)
+                if stars <= 2 and acc_nom not in acciones_rechazadas:
+                    acciones_rechazadas.append(acc_nom)
+                if com and com.strip():
+                    etiqueta = "Refuerzo Positivo" if stars >= 4 else ("Corrección Exigida" if stars <= 2 else "Observación")
+                    entry = f"[{etiqueta} {stars}★ en {acc_nom}]: \"{com.strip()}\""
+                    if entry not in comentarios_aprendidos and len(comentarios_aprendidos) < limit:
+                        comentarios_aprendidos.append(entry)
+            conn.close()
+        except Exception:
+            pass
+
+        return {
+            'estado': s,
+            'estado_es': tipo_es,
+            'total_episodios_estado': max(total_fb_estado, self.episode_counts.get(s, 0)),
+            'politica_optima_id': mejor_accion_id,
+            'politica_optima_nombre': ACCIONES_RL[mejor_accion_id]['nombre'],
+            'q_optimo': round(q_vals.get(mejor_accion_id, 0.5), 4),
+            'comentarios_aprendidos': comentarios_aprendidos or list(self.learned_comments.get(s, []))[:limit],
+            'acciones_rechazadas': acciones_rechazadas
+        }
+
     def registrar_feedback(self, documento_id, nombre_archivo, clase_raw, accion_id, calificacion_estrellas, comentario="", texto_recomendacion=""):
         """
         Ejecuta el paso de aprendizaje por refuerzo (Bandido Contextual (Q-Learning TD) Update)
         a partir del Feedback humano del usuario y persiste el aprendizaje en BD.
         """
+        import threading
         s = self.normalize_state(clase_raw)
         a = accion_id if accion_id in ACCIONES_RL else self.seleccionar_accion(s)['accion_id']
         estrellas, r = self.calcular_recompensa(calificacion_estrellas)
 
         q_anterior = self.q_table[s][a]
 
-        # Ecuación de actualización Q-Learning Contextual:
+        # 1. Ecuación de actualización Q-Learning Contextual:
         # Q(s, a) <- Q(s, a) + alpha * [ r - Q(s, a) ]
         td_error = r - q_anterior
         q_nuevo = max(-1.0, min(1.0, q_anterior + self.alpha * td_error))
@@ -353,19 +433,40 @@ class RLRecommendationAgent:
         self.q_table[s][a] = q_nuevo
         self.visits[s][a] = self.visits[s].get(a, 1) + 1
         self.cum_reward[s][a] = self.cum_reward[s].get(a, 0.0) + r
+        self.episode_counts[s] = self.episode_counts.get(s, 0) + 1
+        if comentario and comentario.strip():
+            etiqueta = "Refuerzo Positivo" if estrellas >= 4 else ("Corrección Exigida" if estrellas <= 2 else "Observación")
+            entry = f"[{etiqueta} {estrellas}★ en {ACCIONES_RL[a]['nombre']}]: \"{comentario.strip()}\""
+            if entry not in self.learned_comments.setdefault(s, []):
+                self.learned_comments[s].insert(0, entry)
+
+        # 2. Aprendizaje semántico por comentario (Contextual Reward Shaping):
+        # Si el usuario menciona en su comentario un enfoque específico, reforzamos esa política.
+        intencion_acc = self._detectar_intencion_comentario(comentario)
+        bonus_contextual = 0.0
+        if intencion_acc and intencion_acc in self.q_table[s]:
+            if intencion_acc != a and r <= 0.15:
+                # Si penalizó la actual y pidió otra estrategia en su comentario, impulsar la estrategia pedida
+                bonus_contextual = 0.14
+                self.q_table[s][intencion_acc] = min(1.0, self.q_table[s][intencion_acc] + bonus_contextual)
+            elif intencion_acc == a and r > 0:
+                bonus_contextual = 0.04
+                self.q_table[s][a] = min(1.0, self.q_table[s][a] + bonus_contextual)
+                q_nuevo = self.q_table[s][a]
 
         ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         tipo_es = TRADUCCION_ESTADOS.get(s, s)
 
-        # Persistir en SQLite
+        # 3. Persistir inmediatamente en SQLite local (ultra-rápido, < 3ms)
         try:
             conn = sqlite3.connect(self.db_path, timeout=15)
             cur = conn.cursor()
-            cur.execute('''
-                INSERT OR REPLACE INTO rl_q_table
-                (estado_clase, accion_estrategia, q_valor, visitas, recompensa_acumulada, ultima_actualizacion)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (s, a, round(q_nuevo, 4), self.visits[s][a], round(self.cum_reward[s][a], 4), ahora))
+            for act_k in LISTA_ACCIONES:
+                cur.execute('''
+                    INSERT OR REPLACE INTO rl_q_table
+                    (estado_clase, accion_estrategia, q_valor, visitas, recompensa_acumulada, ultima_actualizacion)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (s, act_k, round(self.q_table[s][act_k], 4), self.visits[s][act_k], round(self.cum_reward[s][act_k], 4), ahora))
 
             cur.execute('''
                 INSERT INTO rl_feedback_historial
@@ -382,40 +483,70 @@ class RLRecommendationAgent:
         except Exception as e:
             print("Aviso guardando feedback RL en SQLite:", e)
 
-        # Persistir en MySQL si está conectado
+        # 4. Persistir en MySQL remoto de forma asíncrona (no bloquea la respuesta al usuario)
         if self.get_mysql_connection:
-            conn_my = self.get_mysql_connection()
-            if conn_my:
-                try:
-                    with conn_my.cursor() as cur:
-                        cur.execute('''
-                            INSERT INTO rl_q_table
-                            (estado_clase, accion_estrategia, q_valor, visitas, recompensa_acumulada, ultima_actualizacion)
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                            ON DUPLICATE KEY UPDATE
-                                q_valor = VALUES(q_valor),
-                                visitas = VALUES(visitas),
-                                recompensa_acumulada = VALUES(recompensa_acumulada),
-                                ultima_actualizacion = VALUES(ultima_actualizacion)
-                        ''', (s, a, round(q_nuevo, 4), self.visits[s][a], round(self.cum_reward[s][a], 4), ahora))
+            q_snapshot = {act_k: (round(self.q_table[s][act_k], 4), self.visits[s][act_k], round(self.cum_reward[s][act_k], 4)) for act_k in LISTA_ACCIONES}
+            def _sync_mysql_rl():
+                conn_my = self.get_mysql_connection()
+                if conn_my:
+                    try:
+                        with conn_my.cursor() as cur:
+                            for act_k, (qv_k, vis_k, cum_k) in q_snapshot.items():
+                                cur.execute('''
+                                    INSERT INTO rl_q_table
+                                    (estado_clase, accion_estrategia, q_valor, visitas, recompensa_acumulada, ultima_actualizacion)
+                                    VALUES (%s, %s, %s, %s, %s, %s)
+                                    ON DUPLICATE KEY UPDATE
+                                        q_valor = VALUES(q_valor),
+                                        visitas = VALUES(visitas),
+                                        recompensa_acumulada = VALUES(recompensa_acumulada),
+                                        ultima_actualizacion = VALUES(ultima_actualizacion)
+                                ''', (s, act_k, qv_k, vis_k, cum_k, ahora))
 
-                        cur.execute('''
-                            INSERT INTO rl_feedback_historial
-                            (documento_id, nombre_archivo, estado_clase, tipo_documento_es, accion_estrategia,
-                             calificacion_estrellas, recompensa, q_valor_anterior, q_valor_nuevo, comentario, texto_recomendacion, fecha_feedback)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ''', (
-                            documento_id, nombre_archivo or f'Doc #{documento_id}', s, tipo_es, a,
-                            estrellas, round(r, 3), round(q_anterior, 4), round(q_nuevo, 4),
-                            comentario or '', texto_recomendacion or '', ahora
-                        ))
-                    conn_my.close()
-                except Exception as e:
-                    print("Aviso guardando feedback RL en MySQL:", e)
+                            cur.execute('''
+                                INSERT INTO rl_feedback_historial
+                                (documento_id, nombre_archivo, estado_clase, tipo_documento_es, accion_estrategia,
+                                 calificacion_estrellas, recompensa, q_valor_anterior, q_valor_nuevo, comentario, texto_recomendacion, fecha_feedback)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ''', (
+                                documento_id, nombre_archivo or f'Doc #{documento_id}', s, tipo_es, a,
+                                estrellas, round(r, 3), round(q_anterior, 4), round(q_nuevo, 4),
+                                comentario or '', texto_recomendacion or '', ahora
+                            ))
+                        conn_my.close()
+                    except Exception as e:
+                        print("Aviso guardando feedback RL en MySQL:", e)
+            threading.Thread(target=_sync_mysql_rl, daemon=True).start()
 
-        # Determinar cuál es ahora la política óptima para este estado s
-        mejor_accion_id = max(LISTA_ACCIONES, key=lambda act: self.q_table[s][act])
+        # 5. Calcular nueva distribución de probabilidad Softmax y política óptima para este estado s
+        q_vals_s = self.q_table[s]
+        mejor_accion_id = max(LISTA_ACCIONES, key=lambda act: q_vals_s[act])
         cambio_politica = (mejor_accion_id != a) and (r < 0)
+
+        tau = 0.25
+        max_q = max(q_vals_s.values())
+        exp_q = {act: math.exp((q_vals_s[act] - max_q) / tau) for act in LISTA_ACCIONES}
+        sum_exp = sum(exp_q.values()) or 1.0
+        pol_probs = {act: round((exp_q[act] / sum_exp) * 100, 1) for act in LISTA_ACCIONES}
+
+        memoria_estado = self.obtener_memoria_aprendizaje(s, limit=3)
+        delta_q = round(q_nuevo - q_anterior, 4)
+
+        if r > 0:
+            explicacion_aprendizaje = (
+                f"Refuerzo Positivo aplicado: el Agente RL incrementó la confianza de la política «{ACCIONES_RL[a]['nombre']}» "
+                f"para «{tipo_es}» de {q_anterior:+.3f} a {q_nuevo:+.3f} (ΔQ = {delta_q:+.3f}, probabilidad de selección: {pol_probs[a]}%). "
+            )
+        else:
+            explicacion_aprendizaje = (
+                f"Penalización aplicada: el Agente RL redujo el peso de «{ACCIONES_RL[a]['nombre']}» "
+                f"de {q_anterior:+.3f} a {q_nuevo:+.3f} (ΔQ = {delta_q:+.3f}) y conmutó la política óptima hacia «{ACCIONES_RL[mejor_accion_id]['nombre']}». "
+            )
+        if comentario and comentario.strip():
+            explicacion_aprendizaje += (
+                f"Además, tu observación (\"{comentario.strip()}\") quedó guardada en la memoria RLHF de «{tipo_es}» "
+                f"({memoria_estado['total_episodios_estado']} episodios aprendidos) y se inyecta automáticamente en el Prompt del LLM para futuros documentos."
+            )
 
         return {
             'estado': s,
@@ -426,14 +557,21 @@ class RLRecommendationAgent:
             'recompensa': round(r, 3),
             'q_anterior': round(q_anterior, 4),
             'q_nuevo': round(q_nuevo, 4),
-            'delta_q': round(q_nuevo - q_anterior, 4),
+            'delta_q': delta_q,
             'td_error': round(td_error, 4),
             'alpha': self.alpha,
             'formula_aplicada': f"Q({s}, {a}) ← {q_anterior:.3f} + {self.alpha} × ({r:+.2f} - {q_anterior:.3f}) = {q_nuevo:.3f}",
             'politica_optima_actual': mejor_accion_id,
             'politica_optima_nombre': ACCIONES_RL[mejor_accion_id]['nombre'],
             'cambio_politica': cambio_politica,
-            'q_valores_estado': {act: round(self.q_table[s][act], 4) for act in LISTA_ACCIONES},
+            'q_valores_estado': {act: round(q_vals_s[act], 4) for act in LISTA_ACCIONES},
+            'probabilidades_politica': pol_probs,
+            'probabilidad_accion_calificada': pol_probs.get(a, 25.0),
+            'intencion_comentario_detectada': ACCIONES_RL[intencion_acc]['nombre'] if intencion_acc else None,
+            'intencion_accion_id': intencion_acc,
+            'total_episodios_estado': memoria_estado['total_episodios_estado'],
+            'comentarios_aprendidos_estado': memoria_estado['comentarios_aprendidos'],
+            'explicacion_aprendizaje': explicacion_aprendizaje,
             'fecha': ahora
         }
 
@@ -806,11 +944,11 @@ class LLMPipelineEngine:
             'criterios_evaluados': criterios
         }
 
-    def construir_prompt(self, clase_predicha, tipo_es, confianza, datos_extraidos, decision_rl, comentario_usuario="", ia_rectificacion=None):
+    def construir_prompt(self, clase_predicha, tipo_es, confianza, datos_extraidos, decision_rl, comentario_usuario="", ia_rectificacion=None, memoria_rl=None):
         """
         Diseña el Prompt Estructurado donde la predicción del modelo neuronal CNN
-        y los campos extraídos entran como INPUT directo al LLM junto con la política RL
-        y la auditoría de rectificación cruzada.
+        y los campos extraídos entran como INPUT directo al LLM junto con la política RL,
+        la memoria episódica aprendida de feedbacks previos y la auditoría de rectificación cruzada.
         """
         numero = datos_extraidos.get('numero', 'N/A')
         fecha = datos_extraidos.get('fecha', 'N/A')
@@ -833,6 +971,16 @@ class LLMPipelineEngine:
 
         ajuste_usuario = f"\n[FEEDBACK ESPECÍFICO DEL USUARIO A INCORPORAR]: {comentario_usuario}" if comentario_usuario else ""
 
+        sec_memoria_rl = ""
+        if memoria_rl and (memoria_rl.get('total_episodios_estado', 0) > 0 or memoria_rl.get('comentarios_aprendidos')):
+            coms_str = " | ".join(memoria_rl.get('comentarios_aprendidos', [])) or "Preferencia consolidada por calificaciones de estrellas."
+            rech_str = (", evitando enfoques penalizados: " + ", ".join(memoria_rl['acciones_rechazadas'])) if memoria_rl.get('acciones_rechazadas') else ""
+            sec_memoria_rl = (
+                f"- Memoria RLHF Aprendida ({memoria_rl.get('total_episodios_estado', 0)} episodios previos en {tipo_es}): "
+                f"Política preferida aprendida = {memoria_rl.get('politica_optima_nombre')} (Q={memoria_rl.get('q_optimo', 0.72):+.3f}){rech_str}.\n"
+                f"- Directrices históricas del usuario para esta categoría: {coms_str}\n"
+            )
+
         sec_rectificacion = ""
         if ia_rectificacion:
             sec_rectificacion = (
@@ -854,14 +1002,15 @@ class LLMPipelineEngine:
             f"- Proveedor / Razón Social / Entidad: {entidad} (NIT/Código: {nit})\n"
             f"- Desglose Fiscal: Subtotal ${subtotal:,.2f} USD + Impuestos/Cargos ${iva:,.2f} USD = Total ${total:,.2f} USD\n"
             f"- Detalle de Ítems ({len(productos)}): {resumen_items}\n\n"
-            f"2. POLÍTICA DE DECISIÓN DEL AGENTE RL (Q-LEARNING CONTEXTUAL):\n"
+            f"2. POLÍTICA DE DECISIÓN DEL AGENTE RL (Q-LEARNING CONTEXTUAL + MEMORIA RLHF):\n"
             f"- Estrategia Óptima Seleccionada π*(s): {decision_rl['accion_nombre']} (Valor Q(s,a) actual: {decision_rl['q_valor_actual']:+.3f})\n"
-            f"- Directriz Operativa RL: {decision_rl['directriz_prompt']}{ajuste_usuario}\n\n"
+            f"- Directriz Operativa RL: {decision_rl['directriz_prompt']}\n"
+            f"{sec_memoria_rl}{ajuste_usuario}\n\n"
             f"{sec_rectificacion}"
             f"4. INSTRUCCIONES DE GENERACIÓN PARA EL LLM (> 200 CARACTERES OBLIGATORIO):\n"
-            f"Con base en la predicción '{tipo_es}' que entra como INPUT, genera un texto generativo de recomendación claro, acertado y estructurado de MÁS DE 200 CARACTERES (idealmente entre 420 y 700 caracteres) sobre cómo manejar y gestionar este documento:\n"
+            f"Con base en la predicción '{tipo_es}' que entra como INPUT y la experiencia aprendida por el Agente RL, genera un texto generativo de recomendación claro, acertado y estructurado de MÁS DE 200 CARACTERES (idealmente entre 420 y 700 caracteres) sobre cómo manejar y gestionar este documento:\n"
             f"a) 🔍 AUDITORÍA IA (CNN vs. IA): Ratifica o rectifica la predicción '{tipo_es}' citando los datos reales del documento ({numero}, {entidad}).\n"
-            f"b) 📋 DIAGNÓSTICO SEGÚN POLÍTICA RL ({decision_rl['accion_nombre']}): Analiza los montos (${total:,.2f} USD) e ítems clave.\n"
+            f"b) 📋 DIAGNÓSTICO SEGÚN POLÍTICA RL ({decision_rl['accion_nombre']}): Analiza los montos (${total:,.2f} USD) e ítems clave aplicando lo aprendido del feedback del usuario.\n"
             f"c) ✅ RECOMENDACIONES DE MANEJO: Indica 3 acciones concretas para gestionar contable, logística o financieramente esta predicción."
         )
         return prompt
@@ -1248,8 +1397,9 @@ class LLMPipelineEngine:
             forzar_accion=forzar_accion,
             evitar_accion=evitar_accion
         )
+        memoria_rl = rl_agent.obtener_memoria_aprendizaje(decision_rl['estado'], limit=3) if hasattr(rl_agent, 'obtener_memoria_aprendizaje') else None
 
-        # 2. Construir el Prompt que conecta la predicción de la CNN y la rectificación de la IA como INPUT al LLM
+        # 2. Construir el Prompt que conecta la predicción de la CNN, la memoria RLHF y la rectificación de la IA como INPUT al LLM
         prompt = self.construir_prompt(
             clase_predicha=decision_rl['estado'],
             tipo_es=tipo_es,
@@ -1257,7 +1407,8 @@ class LLMPipelineEngine:
             datos_extraidos=datos_extraidos,
             decision_rl=decision_rl,
             comentario_usuario=comentario_usuario,
-            ia_rectificacion=ia_rectificacion
+            ia_rectificacion=ia_rectificacion,
+            memoria_rl=memoria_rl
         )
 
         # 3. Ejecutar inferencia del LLM por pipeline (API externa / HF Pipeline / Motor Contextual Instruct)
@@ -1307,24 +1458,25 @@ class LLMPipelineEngine:
             print("Aviso guardando recomendación LLM en SQLite:", e)
 
         if self.get_mysql_connection:
-            conn_my = self.get_mysql_connection()
-            if conn_my:
-                try:
-                    with conn_my.cursor() as cur:
-                        cur.execute('''
-                            INSERT INTO recomendaciones_llm
-                            (documento_id, clase_predicha, modelo_llm, accion_rl, prompt_entrada,
-                             texto_recomendacion, longitud_caracteres, comentario_feedback, fecha_generacion)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ''', (
-                            documento_id, decision_rl['estado'], modelo_usado, decision_rl['accion_id'],
-                            prompt, texto_generado, longitud, comentario_usuario or '', ahora
-                        ))
-                        if not rec_id:
-                            rec_id = cur.lastrowid
-                    conn_my.close()
-                except Exception as e:
-                    print("Aviso guardando recomendación LLM en MySQL:", e)
+            import threading
+            def _sync_mysql_rec():
+                conn_my = self.get_mysql_connection()
+                if conn_my:
+                    try:
+                        with conn_my.cursor() as cur:
+                            cur.execute('''
+                                INSERT INTO recomendaciones_llm
+                                (documento_id, clase_predicha, modelo_llm, accion_rl, prompt_entrada,
+                                 texto_recomendacion, longitud_caracteres, comentario_feedback, fecha_generacion)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ''', (
+                                documento_id, decision_rl['estado'], modelo_usado, decision_rl['accion_id'],
+                                prompt, texto_generado, longitud, comentario_usuario or '', ahora
+                            ))
+                        conn_my.close()
+                    except Exception as e:
+                        print("Aviso guardando recomendación LLM en MySQL:", e)
+            threading.Thread(target=_sync_mysql_rec, daemon=True).start()
 
         return {
             'id_recomendacion': rec_id,

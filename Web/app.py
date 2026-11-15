@@ -1,6 +1,7 @@
 import os
 import sys
 import sqlite3
+import threading
 import re
 import time
 import json
@@ -2433,11 +2434,21 @@ def api_rl_feedback():
         texto_recomendacion=texto_actual
     )
 
-    # 2. Si el feedback fue negativo (<= 2 estrellas), o escribió sugerencia, o pidió regenerar:
+    # 2. Si el feedback fue negativo (<= 2 estrellas), o 3 estrellas con observación de corrección,
+    #    o pidió regenerar explícitamente / eligió otra política:
     #    el Agente RL cambia a la mejor estrategia alternativa y el LLM regenera la recomendación.
+    #    Si el feedback es positivo (>= 4 estrellas, ej. "Bien clasificado"), NO bloqueamos regenerando el texto,
+    #    sino que guardamos al instante (< 30 ms) el aprendizaje en Q(s,a) y en la memoria RLHF para futuras predicciones.
     nueva_recomendacion = None
-    if calificacion <= 2 or forzar_regeneracion or bool(comentario) or bool(accion_preferida):
-        evitar = accion_id if (calificacion <= 2 and not accion_preferida) else None
+    debe_regenerar = (
+        calificacion <= 2
+        or (calificacion == 3 and bool(comentario))
+        or forzar_regeneracion
+        or bool(accion_preferida)
+    )
+    if debe_regenerar:
+        accion_objetivo = accion_preferida if (accion_preferida and accion_preferida in ACCIONES_RL) else resultado_rl.get('intencion_accion_id')
+        evitar = accion_id if (calificacion <= 2 and not accion_objetivo) else None
         nueva_recomendacion = llm_engine.generar_recomendacion(
             documento_id=doc_id,
             clase_predicha=clase_raw,
@@ -2445,7 +2456,7 @@ def api_rl_feedback():
             confianza=confianza,
             datos_extraidos=datos_extraidos,
             rl_agent=rl_agent,
-            forzar_accion=accion_preferida if accion_preferida in ACCIONES_RL else None,
+            forzar_accion=accion_objetivo if accion_objetivo in ACCIONES_RL else None,
             evitar_accion=evitar,
             comentario_usuario=comentario
         )
@@ -2453,7 +2464,7 @@ def api_rl_feedback():
         nueva_recomendacion['recompensa_rl'] = resultado_rl['recompensa']
         nueva_recomendacion['comentario_feedback'] = comentario
 
-    # 3. Actualizar el documento en SQLite y MySQL con la calificación y/o nueva recomendación
+    # 3. Actualizar el documento en SQLite (inmediato) y MySQL (asíncrono para respuesta instantánea)
     if doc_id:
         try:
             conn_sq = sqlite3.connect(DB_PATH, timeout=15)
@@ -2475,25 +2486,27 @@ def api_rl_feedback():
         except Exception as e:
             print("Aviso actualizando detalles_json SQLite con feedback RL:", e)
 
-        conn_my = get_mysql_connection()
-        if conn_my:
-            try:
-                with conn_my.cursor() as cur_my:
-                    cur_my.execute("SELECT detalles_json FROM documentos_procesados WHERE id = %s;", (doc_id,))
-                    r_my = cur_my.fetchone()
-                    if r_my and r_my.get('detalles_json'):
-                        det_my = json.loads(r_my['detalles_json'])
-                        if nueva_recomendacion:
-                            det_my['llm_recomendacion'] = nueva_recomendacion
-                        elif det_my.get('llm_recomendacion'):
-                            det_my['llm_recomendacion']['calificacion_usuario'] = calificacion
-                            det_my['llm_recomendacion']['recompensa_rl'] = resultado_rl['recompensa']
-                            det_my['llm_recomendacion']['comentario_feedback'] = comentario
-                        det_my['ultimo_feedback_rl'] = resultado_rl
-                        cur_my.execute("UPDATE documentos_procesados SET detalles_json = %s WHERE id = %s;", (json.dumps(det_my, ensure_ascii=False), doc_id))
-                conn_my.close()
-            except Exception as e:
-                print("Aviso actualizando detalles_json MySQL con feedback RL:", e)
+        def _sync_doc_mysql_fb():
+            conn_my = get_mysql_connection()
+            if conn_my:
+                try:
+                    with conn_my.cursor() as cur_my:
+                        cur_my.execute("SELECT detalles_json FROM documentos_procesados WHERE id = %s;", (doc_id,))
+                        r_my = cur_my.fetchone()
+                        if r_my and r_my.get('detalles_json'):
+                            det_my = json.loads(r_my['detalles_json'])
+                            if nueva_recomendacion:
+                                det_my['llm_recomendacion'] = nueva_recomendacion
+                            elif det_my.get('llm_recomendacion'):
+                                det_my['llm_recomendacion']['calificacion_usuario'] = calificacion
+                                det_my['llm_recomendacion']['recompensa_rl'] = resultado_rl['recompensa']
+                                det_my['llm_recomendacion']['comentario_feedback'] = comentario
+                            det_my['ultimo_feedback_rl'] = resultado_rl
+                            cur_my.execute("UPDATE documentos_procesados SET detalles_json = %s WHERE id = %s;", (json.dumps(det_my, ensure_ascii=False), doc_id))
+                    conn_my.close()
+                except Exception as e:
+                    print("Aviso actualizando detalles_json MySQL con feedback RL:", e)
+        threading.Thread(target=_sync_doc_mysql_fb, daemon=True).start()
 
     stats_actualizadas = rl_agent.obtener_estadisticas_rl()
     return jsonify({
