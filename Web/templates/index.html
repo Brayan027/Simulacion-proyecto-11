@@ -408,7 +408,7 @@
             </div>
           </div>
 
-          <!-- MÓDULO LLM: Recomendación Estratégica Conectada por Pipeline -->
+          <!-- MÓDULO LLM: Recomendación Estratégica Conectada por Pipeline (30% Rúbrica) -->
           <div class="bg-gradient-to-br from-indigo-50/60 via-white to-blue-50/50 rounded-xl p-4 border border-indigo-200/80 shadow-sm space-y-3">
             <div class="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-indigo-100">
               <div class="flex items-center gap-2">
@@ -417,7 +417,7 @@
                 </div>
                 <div>
                   <h4 class="text-xs font-extrabold text-indigo-950 uppercase tracking-wider">
-                    Recomendación Asistida por LLM
+                    1. Modelo Pre-entrenado LLM Conectado por Pipeline (&gt; 200 Caracteres)
                   </h4>
                   <p id="llmModeloNombre" class="text-[11px] text-indigo-600 font-semibold">
                     Gemini (gemini-2.5-flash) - API Google
@@ -430,16 +430,27 @@
                   <span id="llmTextoPoliticaRL">Política RL: Auditoría</span>
                 </span>
                 <span id="llmBadgeCaracteres" class="text-[10px] mono font-bold px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg">
-                  580 chars
+                  ✅ 580 chars (&gt; 200)
                 </span>
               </div>
+            </div>
+
+            <!-- Tira visual del flujo del Pipeline CNN -> Prompt INPUT -> LLM -> RL -->
+            <div class="flex flex-wrap items-center gap-1.5 text-[10px] font-semibold bg-white/90 px-3 py-1.5 rounded-lg border border-indigo-100 text-slate-600">
+              <span class="px-2 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-200 font-bold">1. Predicción CNN (INPUT)</span>
+              <span class="text-slate-400">➔</span>
+              <span class="px-2 py-0.5 bg-amber-50 text-amber-800 rounded border border-amber-200 font-bold">2. Política Agente RL π*(s)</span>
+              <span class="text-slate-400">➔</span>
+              <span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded border border-indigo-200 font-bold">3. Prompt + Pipeline LLM</span>
+              <span class="text-slate-400">➔</span>
+              <span class="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded border border-emerald-200 font-bold">4. Recomendación (&gt;200 chars)</span>
             </div>
 
             <!-- Controles de Recomendación -->
             <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
               <button type="button" onclick="togglePromptPipeline('main')" class="text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 flex items-center gap-1 transition">
                 <i data-lucide="terminal" class="w-3.5 h-3.5"></i>
-                <span>Ver Prompt Estructurado</span>
+                <span>Ver Prompt Estructurado (INPUT de la Predicción al LLM)</span>
               </button>
 
               <div class="flex items-center gap-1.5">
@@ -459,7 +470,7 @@
 
             <!-- Visor del Prompt Estructurado -->
             <div id="boxPromptPipelineMain" class="hidden bg-slate-900 text-slate-100 p-3 rounded-xl text-[11px] mono overflow-x-auto border border-slate-700">
-              <div class="text-indigo-400 font-bold text-[10px] uppercase mb-1">Prompt de Inferencia:</div>
+              <div class="text-indigo-400 font-bold text-[10px] uppercase mb-1">Prompt Estructurado Conectado por Pipeline (Predicción CNN como INPUT al LLM):</div>
               <pre id="prePromptPipelineMain" class="whitespace-pre-wrap text-slate-200 leading-relaxed"></pre>
             </div>
 
@@ -471,7 +482,7 @@
             </div>
           </div>
 
-          <!-- MÓDULO RL: Calificación y Aprendizaje por Refuerzo -->
+          <!-- MÓDULO RL: Calificación y Aprendizaje por Refuerzo (30% Rúbrica) -->
           <div class="bg-amber-50/50 rounded-xl p-4 border border-amber-200/80 space-y-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div class="flex items-center gap-2">
@@ -480,10 +491,10 @@
                 </div>
                 <div>
                   <h4 class="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-                    Evaluación y Aprendizaje por Refuerzo (RL)
+                    2. Aprendizaje por Refuerzo (RL): Feedback del Usuario para Calificar la Recomendación
                   </h4>
                   <p class="text-[11px] text-slate-600">
-                    Tu calificación calibra la matriz de decisión del agente mediante Q-Learning.
+                    Califica la recomendación generada: el agente actualiza Q(s, a) ← Q(s, a) + α·[r − Q(s, a)] y reajusta la política si el feedback es negativo.
                   </p>
                 </div>
               </div>
@@ -751,18 +762,49 @@
         </div>
       </div>
 
-      <!-- Historial de Feedbacks Recientes -->
-      <div class="space-y-2.5">
-        <div class="flex items-center justify-between">
-          <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-            <i data-lucide="history" class="w-4 h-4 text-amber-600"></i>
-            Feedbacks Recientes del Usuario
-          </h3>
-          <span class="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">Persistido</span>
+      <!-- Matriz Q(s,a) y Feedbacks Recientes -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        <!-- Tabla Q(Estado, Acción) -->
+        <div class="lg:col-span-7 space-y-2.5">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <i data-lucide="grid" class="w-4 h-4 text-indigo-600"></i>
+              Matriz de Valores Q(Estado s, Acción a) y Política Óptima π*(s)
+            </h3>
+            <span class="text-[10px] mono font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">Q(s,a) ← Q(s,a) + α·[r - Q(s,a)]</span>
+          </div>
+          <div class="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="bg-slate-50 border-b border-slate-200 text-[10px] font-extrabold text-slate-600 uppercase tracking-wider">
+                  <th class="py-2.5 px-3">Estado s (Clase CNN)</th>
+                  <th class="py-2.5 px-2 text-center">Auditoría Contable</th>
+                  <th class="py-2.5 px-2 text-center">Gestión Operativa</th>
+                  <th class="py-2.5 px-2 text-center">Financiero / Tesorería</th>
+                  <th class="py-2.5 px-2 text-center">Control Interno</th>
+                  <th class="py-2.5 px-3">Política π*(s)</th>
+                </tr>
+              </thead>
+              <tbody id="rlQTableBody" class="divide-y divide-slate-100">
+                <!-- Renderizado por JS -->
+              </tbody>
+            </table>
+          </div>
         </div>
 
-        <div id="rlFeedbackList" class="space-y-2 max-h-60 overflow-y-auto pr-1 text-xs">
-          <!-- Renderizado por JS -->
+        <!-- Historial de Feedbacks Recientes -->
+        <div class="lg:col-span-5 space-y-2.5">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <i data-lucide="history" class="w-4 h-4 text-amber-600"></i>
+              Feedbacks Recientes del Usuario (RL)
+            </h3>
+            <span class="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">Persistido en MySQL</span>
+          </div>
+
+          <div id="rlFeedbackList" class="space-y-2 max-h-64 overflow-y-auto pr-1 text-xs">
+            <!-- Renderizado por JS -->
+          </div>
         </div>
       </div>
     </div>
@@ -1047,8 +1089,16 @@
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <span class="text-[11px] font-bold text-slate-800 flex items-center gap-1">
                   <i data-lucide="award" class="w-3.5 h-3.5 text-amber-600"></i>
-                  Calificar Recomendación:
+                  Feedback RL (Calificar Recomendación):
                 </span>
+                <div class="flex items-center gap-1 bg-white px-2 py-0.5 rounded-lg border border-slate-200" id="starsContainerModal">
+                  <button type="button" onclick="seleccionarEstrellas('modal', 1)" class="star-btn-modal p-0.5 text-amber-400 hover:scale-110 transition text-sm">★</button>
+                  <button type="button" onclick="seleccionarEstrellas('modal', 2)" class="star-btn-modal p-0.5 text-amber-400 hover:scale-110 transition text-sm">★</button>
+                  <button type="button" onclick="seleccionarEstrellas('modal', 3)" class="star-btn-modal p-0.5 text-amber-400 hover:scale-110 transition text-sm">★</button>
+                  <button type="button" onclick="seleccionarEstrellas('modal', 4)" class="star-btn-modal p-0.5 text-amber-400 hover:scale-110 transition text-sm">★</button>
+                  <button type="button" onclick="seleccionarEstrellas('modal', 5)" class="star-btn-modal p-0.5 text-amber-400 hover:scale-110 transition text-sm">★</button>
+                  <span id="labelEstrellasModal" class="text-[10px] font-extrabold text-amber-800 ml-1 mono">5★ (r = +1.00)</span>
+                </div>
                 <div class="flex items-center gap-1">
                   <button type="button" onclick="enviarFeedbackRapido('modal', 5)" class="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold">👍 5★ (+1.0)</button>
                   <button type="button" onclick="enviarFeedbackRapido('modal', 4)" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-bold">👌 4★ (+0.6)</button>
@@ -1056,9 +1106,9 @@
                 </div>
               </div>
               <div class="flex items-center gap-2">
-                <input type="text" id="inputComentarioRLModal" placeholder="Comentario u observación..." class="flex-1 text-[11px] px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
+                <input type="text" id="inputComentarioRLModal" placeholder="Comentario u observación para ajustar el Agente RL..." class="flex-1 text-[11px] px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
                 <button type="button" onclick="enviarFeedbackRL('modal')" class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] rounded-lg">
-                  Enviar
+                  Enviar Feedback RL
                 </button>
               </div>
               <div id="alertaResultadoRLModal" class="hidden p-2 bg-emerald-50 border border-emerald-300 rounded-lg text-[11px] text-emerald-900 mono"></div>
@@ -2233,6 +2283,16 @@
     function seleccionarEstrellas(scope, n) {
       if (scope === 'modal') {
         estrellasSeleccionadasModal = n;
+        const btnsM = document.querySelectorAll('.star-btn-modal');
+        btnsM.forEach((b, idx) => {
+          if (idx < n) {
+            b.className = "star-btn-modal p-0.5 text-amber-400 hover:scale-110 transition text-sm";
+          } else {
+            b.className = "star-btn-modal p-0.5 text-slate-300 hover:scale-110 transition text-sm";
+          }
+        });
+        const lblM = document.getElementById('labelEstrellasModal');
+        if (lblM) lblM.textContent = `${n}★ (r = ${MAPA_RECOMPENSAS_UI[n]})`;
         return;
       }
       estrellasSeleccionadasMain = n;
@@ -2466,15 +2526,16 @@
       if (scope === 'modal') {
         document.getElementById('modalLlmModelo').textContent = modeloNombre;
         document.getElementById('modalLlmPoliticaBadge').textContent = `Política RL: ${rlDec.accion_nombre} (Q: ${qStr})`;
-        document.getElementById('modalLlmCharsBadge').textContent = `${lenChars} chars`;
+        document.getElementById('modalLlmCharsBadge').textContent = `✅ ${lenChars} chars (> 200)`;
         document.getElementById('prePromptPipelineModal').textContent = promptTxt;
         document.getElementById('modalLlmTexto').innerHTML = htmlFormateado;
         const alertaM = document.getElementById('alertaResultadoRLModal');
         if (alertaM) alertaM.classList.add('hidden');
+        seleccionarEstrellas('modal', (llm && llm.calificacion_usuario) ? Number(llm.calificacion_usuario) : 5);
       } else {
         document.getElementById('llmModeloNombre').textContent = modeloNombre;
         document.getElementById('llmTextoPoliticaRL').textContent = `Política RL: ${rlDec.accion_nombre} (Q: ${qStr})`;
-        document.getElementById('llmBadgeCaracteres').textContent = `${lenChars} chars`;
+        document.getElementById('llmBadgeCaracteres').textContent = `✅ ${lenChars} chars (> 200)`;
         document.getElementById('prePromptPipelineMain').textContent = promptTxt;
         document.getElementById('llmTextoRecomendacionMain').innerHTML = htmlFormateado;
 
@@ -2489,7 +2550,7 @@
           badgeFb.className = "text-[10px] font-bold px-2.5 py-1 bg-white text-amber-800 border border-amber-300 rounded-lg";
           badgeFb.textContent = "Pendiente de calificación";
         }
-        seleccionarEstrellas('main', 5);
+        seleccionarEstrellas('main', (llm && llm.calificacion_usuario) ? Number(llm.calificacion_usuario) : 5);
       }
     }
 
@@ -2689,7 +2750,7 @@
                 <div class="flex items-center justify-between text-[10px] text-slate-600 mono">
                   <span class="truncate">Política: <strong>${fb.accion_nombre}</strong></span>
                   <span class="font-bold ${isPos ? 'text-emerald-700' : 'text-rose-600'}">
-                    ${isPos ? 'Aceptado por Usuario' : 'Ajuste de Política'}
+                    r=${fb.recompensa >= 0 ? '+' : ''}${Number(fb.recompensa).toFixed(2)} | Q: ${Number(fb.q_anterior).toFixed(3)}➔${Number(fb.q_nuevo).toFixed(3)}
                   </span>
                 </div>
                 ${fb.comentario ? `<p class="text-[10px] text-slate-500 italic truncate">"${fb.comentario}"</p>` : ''}

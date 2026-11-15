@@ -844,24 +844,25 @@ class LLMPipelineEngine:
             )
 
         prompt = (
-            f"Actúa como Especialista Senior en Inteligencia Documental, Auditoría Contable y Clasificación Empresarial.\n\n"
-            f"1. CLASIFICACIÓN DEL DOCUMENTO:\n"
-            f"- Tipo Clasificado: {tipo_es} (Clase interna: {clase_predicha})\n"
-            f"- Confianza del Modelo CNN: {confianza:.2f}%\n"
-            f"- ID / Número: {numero}\n"
-            f"- Fecha: {fecha}\n"
-            f"- Proveedor / Razón Social: {entidad} (NIT/Código: {nit})\n"
+            f"Actúa como Especialista Senior en Inteligencia Documental, Auditoría Contable y Clasificación Empresarial.\n"
+            f"Este prompt conecta por PIPELINE la predicción de la Red Neuronal Convolucional (CNN) y la política del Agente de Aprendizaje por Refuerzo (RL) como INPUT al modelo pre-entrenado LLM.\n\n"
+            f"1. INPUT DE LA PREDICCIÓN DEL MODELO NEURONAL (CNN + OCR):\n"
+            f"- Clase Predicha por la CNN: {tipo_es} (Etiqueta del modelo: {clase_predicha})\n"
+            f"- Confianza de la Predicción CNN: {confianza:.2f}%\n"
+            f"- ID / Número de Documento: {numero}\n"
+            f"- Fecha de Emisión: {fecha}\n"
+            f"- Proveedor / Razón Social / Entidad: {entidad} (NIT/Código: {nit})\n"
             f"- Desglose Fiscal: Subtotal ${subtotal:,.2f} USD + Impuestos/Cargos ${iva:,.2f} USD = Total ${total:,.2f} USD\n"
             f"- Detalle de Ítems ({len(productos)}): {resumen_items}\n\n"
-            f"2. POLÍTICA DE DECISIÓN RL ACTIVA:\n"
-            f"- Estrategia Seleccionada: {decision_rl['accion_nombre']} (Valor Q esperado: {decision_rl['q_valor_actual']:+.3f})\n"
-            f"- Directriz Operativa: {decision_rl['directriz_prompt']}{ajuste_usuario}\n\n"
+            f"2. POLÍTICA DE DECISIÓN DEL AGENTE RL (Q-LEARNING CONTEXTUAL):\n"
+            f"- Estrategia Óptima Seleccionada π*(s): {decision_rl['accion_nombre']} (Valor Q(s,a) actual: {decision_rl['q_valor_actual']:+.3f})\n"
+            f"- Directriz Operativa RL: {decision_rl['directriz_prompt']}{ajuste_usuario}\n\n"
             f"{sec_rectificacion}"
-            f"4. INSTRUCCIONES DE RESPUESTA:\n"
-            f"Genera un dictamen profesional, estructurado y conciso (entre 220 y 380 caracteres) enfocado estrictamente en este documento: "
-            f"a) 🔍 AUDITORÍA IA: Ratifica o rectifica la clasificación CNN con evidencias contables. "
-            f"b) Diagnóstico de control según '{decision_rl['accion_nombre']}'. "
-            f"c) Acciones recomendadas y próximos pasos."
+            f"4. INSTRUCCIONES DE GENERACIÓN PARA EL LLM (> 200 CARACTERES OBLIGATORIO):\n"
+            f"Con base en la predicción '{tipo_es}' que entra como INPUT, genera un texto generativo de recomendación claro, acertado y estructurado de MÁS DE 200 CARACTERES (idealmente entre 420 y 700 caracteres) sobre cómo manejar y gestionar este documento:\n"
+            f"a) 🔍 AUDITORÍA IA (CNN vs. IA): Ratifica o rectifica la predicción '{tipo_es}' citando los datos reales del documento ({numero}, {entidad}).\n"
+            f"b) 📋 DIAGNÓSTICO SEGÚN POLÍTICA RL ({decision_rl['accion_nombre']}): Analiza los montos (${total:,.2f} USD) e ítems clave.\n"
+            f"c) ✅ RECOMENDACIONES DE MANEJO: Indica 3 acciones concretas para gestionar contable, logística o financieramente esta predicción."
         )
         return prompt
 
@@ -899,7 +900,7 @@ class LLMPipelineEngine:
             if self.gemini_keys:
                 n = len(self.gemini_keys)
                 for mod in self._modelos_gemini():
-                    gen_cfg = {"temperature": 0.3, "maxOutputTokens": 380, "thinkingConfig": {"thinkingBudget": 0}}
+                    gen_cfg = {"temperature": 0.35, "maxOutputTokens": 700, "thinkingConfig": {"thinkingBudget": 0}}
                     payload = {"contents": [{"parts": [{"text": limpio}]}], "generationConfig": gen_cfg}
                     for i in range(n):
                         idx = (self.gemini_idx + i) % n
@@ -1358,11 +1359,11 @@ class LLMPipelineEngine:
             f"2. DIRECTRIZ DEL AGENTE RL (POLÍTICA DE CONTROL DE RIESGOS):\n"
             f"- Estrategia Activa: Separación Preventiva de Archivos No Transaccionales.\n"
             f"- Objetivo de Control: Impedir la contaminación de las tablas transaccionales de MySQL y salvaguardar la exactitud contable.\n\n"
-            f"3. INSTRUCCIONES DE RESPUESTA:\n"
-            f"Genera un dictamen analítico profesional, estructurado y conciso (entre 220 y 380 caracteres) para «{nombre_archivo}»:\n"
-            f"a) Incompatibilidad: Por qué carece de validez fiscal/contable para la empresa.\n"
-            f"b) Riesgos: Qué riesgos de control interno se evitan al descartarlo.\n"
-            f"c) Medidas: Justifica la separación preventiva en cuarentena."
+            f"3. INSTRUCCIONES DE RESPUESTA (> 200 CARACTERES OBLIGATORIO):\n"
+            f"Genera un dictamen analítico profesional, estructurado y claro de MÁS DE 200 CARACTERES (entre 380 y 650 caracteres) para «{nombre_archivo}»:\n"
+            f"a) 🔍 Incompatibilidad: Por qué carece de validez fiscal/contable para la empresa.\n"
+            f"b) ⚠️ Riesgos: Qué riesgos de control interno se evitan al descartarlo.\n"
+            f"c) ✅ Medidas: Justifica la separación preventiva en cuarentena."
         )
         texto = self._llamar_api_externa_si_disponible(prompt)
         modelo_usado = getattr(self, 'ultimo_modelo', None) or self.model_name

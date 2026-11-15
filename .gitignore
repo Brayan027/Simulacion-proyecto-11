@@ -55,3 +55,7 @@ CREDENCIALES_*
 sync_server.py
 
 web_update.zip
+
+Web/.mysql_initialized
+Web/.mysql_rl_initialized
+Web/.sync_done
