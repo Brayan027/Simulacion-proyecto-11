@@ -421,6 +421,19 @@ class RLRecommendationAgent:
         import threading
         s = self.normalize_state(clase_raw)
         a = accion_id if accion_id in ACCIONES_RL else self.seleccionar_accion(s)['accion_id']
+
+        # Detección inteligente de inconsistencia: Si el comentario contiene queja o reporte de error explícito,
+        # pero la calificación llegó como positiva (ej. 4★ o 5★ por omisión en UI), forzar señal de castigo r <= -0.55
+        palabras_negativas = [
+            'erronea', 'errónea', 'error', 'fallo', 'falló', 'falso positivo', 'penalizar', 'no es',
+            'colapso', 'incorrecto', 'incorrecta', 'mal clasificado', 'mala clasificacion',
+            'mala clasificación', 'equivocado', 'equivocada', 'no pertenece', 'dañado', 'dañada'
+        ]
+        comentario_clean = (comentario or '').lower().replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u')
+        tiene_queja_explicita = any(w in comentario_clean for w in palabras_negativas)
+        if tiene_queja_explicita and int(calificacion_estrellas) >= 4:
+            calificacion_estrellas = 1
+
         estrellas, r = self.calcular_recompensa(calificacion_estrellas)
 
         q_anterior = self.q_table[s][a]
@@ -532,8 +545,9 @@ class RLRecommendationAgent:
         memoria_estado = self.obtener_memoria_aprendizaje(s, limit=3)
         delta_q = round(q_nuevo - q_anterior, 4)
 
+        prefijo_queja = "⚠️ [Corrección por Feedback]: Se detectó señalamiento de error en tu observación. El Agente RL aplicó Penalización de Refuerzo Negativo (r = -1.00) para reajustar los pesos de la política. " if tiene_queja_explicita else ""
         if r > 0:
-            explicacion_aprendizaje = (
+            explicacion_aprendizaje = prefijo_queja + (
                 f"Refuerzo Positivo aplicado: el Agente RL incrementó la confianza de la política «{ACCIONES_RL[a]['nombre']}» "
                 f"para «{tipo_es}» de {q_anterior:+.3f} a {q_nuevo:+.3f} (ΔQ = {delta_q:+.3f}, probabilidad de selección: {pol_probs[a]}%). "
             )
@@ -1463,25 +1477,44 @@ class LLMPipelineEngine:
             print("Aviso guardando recomendación LLM en SQLite:", e)
 
         if self.get_mysql_connection:
-            import threading
-            def _sync_mysql_rec():
-                conn_my = self.get_mysql_connection()
-                if conn_my:
-                    try:
-                        with conn_my.cursor() as cur:
-                            cur.execute('''
-                                INSERT INTO recomendaciones_llm
-                                (documento_id, clase_predicha, modelo_llm, accion_rl, prompt_entrada,
-                                 texto_recomendacion, longitud_caracteres, comentario_feedback, fecha_generacion)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ''', (
-                                documento_id, decision_rl['estado'], modelo_usado, decision_rl['accion_id'],
-                                prompt, texto_generado, longitud, comentario_usuario or '', ahora
-                            ))
-                        conn_my.close()
-                    except Exception as e:
-                        print("Aviso guardando recomendación LLM en MySQL:", e)
-            threading.Thread(target=_sync_mysql_rec, daemon=True).start()
+            import threading, queue as _queue_mod
+            if not hasattr(self, '_mysql_rec_queue'):
+                self._mysql_rec_queue = _queue_mod.Queue()
+                def _mysql_rec_worker():
+                    conn_my = None
+                    while True:
+                        params = self._mysql_rec_queue.get()
+                        try:
+                            if conn_my is None:
+                                conn_my = self.get_mysql_connection()
+                            else:
+                                try:
+                                    conn_my.ping(reconnect=True)
+                                except Exception:
+                                    conn_my = self.get_mysql_connection()
+                            if conn_my:
+                                with conn_my.cursor() as cur:
+                                    cur.execute('''
+                                        INSERT INTO recomendaciones_llm
+                                        (documento_id, clase_predicha, modelo_llm, accion_rl, prompt_entrada,
+                                         texto_recomendacion, longitud_caracteres, comentario_feedback, fecha_generacion)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    ''', params)
+                        except Exception as e:
+                            print("Aviso guardando recomendación LLM en MySQL:", e)
+                            try:
+                                if conn_my:
+                                    conn_my.close()
+                            except Exception:
+                                pass
+                            conn_my = None
+                        finally:
+                            self._mysql_rec_queue.task_done()
+                threading.Thread(target=_mysql_rec_worker, daemon=True).start()
+            self._mysql_rec_queue.put((
+                documento_id, decision_rl['estado'], modelo_usado, decision_rl['accion_id'],
+                prompt, texto_generado, longitud, comentario_usuario or '', ahora
+            ))
 
         return {
             'id_recomendacion': rec_id,

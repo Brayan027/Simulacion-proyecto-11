@@ -1,7 +1,15 @@
 import os
 import sys
+
+# Evitar contención de hilos OpenBLAS/OMP en servidores compartidos (acelera NumPy >5x)
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+os.environ.setdefault('MKL_NUM_THREADS', '1')
+
 import sqlite3
 import threading
+import queue
+from concurrent.futures import ThreadPoolExecutor
 import re
 import time
 import json
@@ -22,10 +30,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 from flask import Flask, request, jsonify, render_template, send_from_directory, redirect, Response
 from werkzeug.exceptions import HTTPException
-try:
-    import tensorflow as tf
-except Exception:
-    tf = None
+tf = None
 import pymysql
 
 # Inicialización de la aplicación Flask
@@ -450,23 +455,30 @@ if not os.path.exists(NPZ_PATH):
 _MODEL_INSTANCE = None
 
 def get_model():
-    global _MODEL_INSTANCE
+    global _MODEL_INSTANCE, tf
     if _MODEL_INSTANCE is None:
         if os.path.exists(NPZ_PATH):
             print(f"[*] Cargando modelo NumPy ultra-rápido desde {NPZ_PATH}...")
             _MODEL_INSTANCE = NumpyCNNModel(NPZ_PATH)
             print("✅ Modelo CNN NumPy cargado exitosamente.")
-        elif tf is not None:
-            MODEL_PATH = os.path.join(BASE_DIR, 'modelo_documentos.keras')
-            if not os.path.exists(MODEL_PATH):
-                MODEL_PATH = os.path.join(BASE_DIR, 'modelo_documentos.h5')
-            if not os.path.exists(MODEL_PATH):
-                MODEL_PATH = 'modelo_documentos.keras'
-            print(f"[*] Cargando modelo CNN desde {MODEL_PATH}...")
-            _MODEL_INSTANCE = tf.keras.models.load_model(MODEL_PATH)
-            print("✅ Modelo Keras cargado exitosamente.")
         else:
-            raise RuntimeError("No se encontró ni model_weights.npz ni TensorFlow disponible para cargar el modelo.")
+            if tf is None:
+                try:
+                    import tensorflow as _tf
+                    tf = _tf
+                except Exception:
+                    tf = None
+            if tf is not None:
+                MODEL_PATH = os.path.join(BASE_DIR, 'modelo_documentos.keras')
+                if not os.path.exists(MODEL_PATH):
+                    MODEL_PATH = os.path.join(BASE_DIR, 'modelo_documentos.h5')
+                if not os.path.exists(MODEL_PATH):
+                    MODEL_PATH = 'modelo_documentos.keras'
+                print(f"[*] Cargando modelo CNN desde {MODEL_PATH}...")
+                _MODEL_INSTANCE = tf.keras.models.load_model(MODEL_PATH)
+                print("✅ Modelo Keras cargado exitosamente.")
+            else:
+                raise RuntimeError("No se encontró ni model_weights.npz ni TensorFlow disponible para cargar el modelo.")
     return _MODEL_INSTANCE
 
 # Clases del modelo
@@ -477,6 +489,33 @@ TRADUCCION_CLASES = {
     'Shipping orders': 'Comprobante / Despacho de Envío',
     'Inventory Report': 'Reporte de Inventario'
 }
+
+
+# Helper de Memoria Humana de Clasificación (Active Learning / RLHF)
+CORRECCIONES_PATH = os.path.join(BASE_DIR, 'correcciones_usuario.json')
+
+def cargar_correcciones_usuario():
+    if os.path.exists(CORRECCIONES_PATH):
+        try:
+            with open(CORRECCIONES_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def guardar_correccion_usuario(nombre_archivo, clase_nueva, tipo_es):
+    corrs = cargar_correcciones_usuario()
+    corrs[nombre_archivo] = {
+        'clase': clase_nueva,
+        'tipo': tipo_es,
+        'fecha': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    try:
+        with open(CORRECCIONES_PATH, 'w', encoding='utf-8') as f:
+            json.dump(corrs, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("Aviso guardando correcciones_usuario.json:", e)
+
 
 # 3. Cargar Ground Truth del Dataset de forma bajo demanda (Lazy Loading)
 _DATASET_LOOKUP = None
@@ -1328,7 +1367,205 @@ def validar_documento(guardado_path, nombre_archivo):
 
 
 # 6. Almacenamiento Especializado en MySQL + SQLite
-def guardar_en_bases_de_datos(payload):
+_SQLITE_LOCK = threading.Lock()
+_mysql_sync_queue = queue.Queue()
+_mysql_worker_started = False
+_mysql_worker_lock = threading.Lock()
+
+def _insertar_en_mysql(conn_my, payload, ahora_str):
+    doc_id = None
+    campos = payload['datos_extraidos']
+    tipo = payload['tipo_documento']
+    with conn_my.cursor() as cur:
+        # 1. Tabla Maestra
+        cur.execute('''
+            INSERT INTO documentos_procesados 
+            (nombre_archivo, tipo_documento, confianza, tiempo_seg, fecha_procesamiento, url_archivo, url_vista, detalles_json)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (
+            payload['nombre_archivo'],
+            tipo,
+            payload['confianza'],
+            payload['tiempo_proceso'],
+            ahora_str,
+            payload['url_archivo'],
+            payload['url_vista'],
+            json.dumps(payload, ensure_ascii=False)
+        ))
+        doc_id = cur.lastrowid
+
+        # 2. Tablas Específicas
+        if 'Factura' in tipo:
+            cur.execute('''
+                INSERT INTO facturas 
+                (documento_id, numero_factura, nit_cliente, fecha_emision, contacto_cliente, direccion, total, url_archivo, url_vista, fecha_registro)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (
+                doc_id,
+                campos.get('numero', 'N/A'),
+                campos.get('nit', 'N/A'),
+                campos.get('fecha') if campos.get('fecha') != 'N/A' else None,
+                campos.get('entidad', 'N/A'),
+                campos.get('campos_especificos', {}).get('Dirección de Facturación', 'N/A'),
+                campos.get('total', 0.0),
+                payload['url_archivo'],
+                payload['url_vista'],
+                ahora_str
+            ))
+        elif 'Orden' in tipo:
+            cur.execute('''
+                INSERT INTO ordenes_compra 
+                (documento_id, numero_orden, fecha_pedido, cliente_comprador, cant_items, total_liquidado, url_archivo, url_vista, fecha_registro)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (
+                doc_id,
+                campos.get('numero', 'N/A'),
+                campos.get('fecha') if campos.get('fecha') != 'N/A' else None,
+                campos.get('entidad', 'N/A'),
+                len(campos.get('productos', [])),
+                campos.get('total', 0.0),
+                payload['url_archivo'],
+                payload['url_vista'],
+                ahora_str
+            ))
+        elif 'Despacho' in tipo or 'Comprobante' in tipo:
+            cur.execute('''
+                INSERT INTO despachos_envio 
+                (documento_id, numero_guia, destinatario, transportadora, nit_cliente, fecha_pedido, fecha_despacho, direccion_entrega, cant_items, total_flete, url_archivo, url_vista, fecha_registro)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (
+                doc_id,
+                campos.get('numero', 'N/A'),
+                campos.get('entidad', 'N/A'),
+                campos.get('campos_especificos', {}).get('Transportadora', 'N/A'),
+                campos.get('nit', 'N/A'),
+                campos.get('fecha') if campos.get('fecha') != 'N/A' else None,
+                campos.get('campos_especificos', {}).get('Fecha de Despacho', None),
+                campos.get('campos_especificos', {}).get('Dirección de Entrega', 'N/A'),
+                len(campos.get('productos', [])),
+                campos.get('total', 0.0),
+                payload['url_archivo'],
+                payload['url_vista'],
+                ahora_str
+            ))
+        elif 'Inventario' in tipo:
+            tot_vend = sum(int(p.get('cantidad', 0)) for p in campos.get('productos', []))
+            tot_stk = sum(int(p.get('precio_unitario', 0)) for p in campos.get('productos', []))
+            try:
+                cur.execute('''
+                    INSERT INTO reportes_inventario 
+                    (documento_id, identificador_reporte, periodo_mensual, fecha_corte, categoria_almacen, id_categoria, total_unidades_vendidas, total_existencias, estado_inventario, url_archivo, url_vista, fecha_registro)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ''', (
+                    doc_id,
+                    campos.get('numero', 'N/A'),
+                    campos.get('campos_especificos', {}).get('Periodo Mensual', '2016-07'),
+                    campos.get('fecha') if campos.get('fecha') != 'N/A' else None,
+                    campos.get('entidad', 'N/A'),
+                    campos.get('nit', 'N/A'),
+                    tot_vend,
+                    tot_stk,
+                    'Existencias Verificadas en Almacén',
+                    payload['url_archivo'],
+                    payload['url_vista'],
+                    ahora_str
+                ))
+            except Exception:
+                cur.execute('''
+                    INSERT INTO reportes_inventario 
+                    (documento_id, identificador_reporte, periodo_mensual, fecha_corte, categoria, id_categoria, unidades_vendidas, unidades_stock, url_archivo, url_vista, fecha_registro)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ''', (
+                    doc_id,
+                    campos.get('numero', 'N/A'),
+                    campos.get('campos_especificos', {}).get('Periodo Mensual', '2016-07'),
+                    campos.get('fecha') if campos.get('fecha') != 'N/A' else None,
+                    campos.get('entidad', 'N/A'),
+                    campos.get('nit', 'N/A'),
+                    tot_vend,
+                    tot_stk,
+                    payload['url_archivo'],
+                    payload['url_vista'],
+                    ahora_str
+                ))
+
+        # 3. Guardar items en tabla detalle por lotes (executemany)
+        productos = campos.get('productos', [])
+        if productos:
+            rows_full = [
+                (
+                    doc_id,
+                    tipo,
+                    str(p.get('id', '')),
+                    str(p.get('nombre', 'Producto')),
+                    int(p.get('cantidad', 0)),
+                    float(p.get('precio_unitario', 0.0)),
+                    float(p.get('subtotal', 0.0))
+                )
+                for p in productos
+            ]
+            try:
+                cur.executemany('''
+                    INSERT INTO items_detalle 
+                    (documento_id, tipo_documento, item_id_externo, nombre_producto, cantidad, precio_unitario, subtotal)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ''', rows_full)
+            except Exception:
+                rows_short = [
+                    (
+                        doc_id,
+                        str(p.get('nombre', 'Producto')),
+                        int(p.get('cantidad', 0)),
+                        float(p.get('precio_unitario', 0.0)),
+                        float(p.get('subtotal', 0.0))
+                    )
+                    for p in productos
+                ]
+                try:
+                    cur.executemany('''
+                        INSERT INTO items_detalle 
+                        (documento_id, nombre_producto, cantidad, precio_unitario, subtotal)
+                        VALUES (%s, %s, %s, %s, %s)
+                    ''', rows_short)
+                except Exception:
+                    pass
+    return doc_id
+
+def _mysql_sync_worker():
+    conn_my = None
+    while True:
+        payload, ahora_str = _mysql_sync_queue.get()
+        try:
+            if conn_my is None:
+                conn_my = get_mysql_connection()
+            else:
+                try:
+                    conn_my.ping(reconnect=True)
+                except Exception:
+                    conn_my = get_mysql_connection()
+            if conn_my:
+                _insertar_en_mysql(conn_my, payload, ahora_str)
+        except Exception as e:
+            print("⚠️ Error en sincronización asíncrona MySQL:", e)
+            try:
+                if conn_my:
+                    conn_my.close()
+            except Exception:
+                pass
+            conn_my = None
+        finally:
+            _mysql_sync_queue.task_done()
+
+def _ensure_mysql_worker():
+    global _mysql_worker_started
+    if not _mysql_worker_started:
+        with _mysql_worker_lock:
+            if not _mysql_worker_started:
+                t = threading.Thread(target=_mysql_sync_worker, daemon=True)
+                t.start()
+                _mysql_worker_started = True
+
+def guardar_en_bases_de_datos(payload, async_mysql=False):
     doc_id = None
     ahora_dt = datetime.now()
     ahora_str = ahora_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -1336,184 +1573,46 @@ def guardar_en_bases_de_datos(payload):
     tipo = payload['tipo_documento']
 
     # --- A. GUARDAR EN MYSQL (BD docuai_sistema) ---
-    conn_my = get_mysql_connection()
-    if conn_my:
-        try:
-            with conn_my.cursor() as cur:
-                # 1. Tabla Maestra
-                cur.execute('''
-                    INSERT INTO documentos_procesados 
-                    (nombre_archivo, tipo_documento, confianza, tiempo_seg, fecha_procesamiento, url_archivo, url_vista, detalles_json)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ''', (
-                    payload['nombre_archivo'],
-                    tipo,
-                    payload['confianza'],
-                    payload['tiempo_proceso'],
-                    ahora_str,
-                    payload['url_archivo'],
-                    payload['url_vista'],
-                    json.dumps(payload, ensure_ascii=False)
-                ))
-                doc_id = cur.lastrowid
-
-                # 2. Tablas Específicas
-                if 'Factura' in tipo:
-                    cur.execute('''
-                        INSERT INTO facturas 
-                        (documento_id, numero_factura, nit_cliente, fecha_emision, contacto_cliente, direccion, total, url_archivo, url_vista, fecha_registro)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ''', (
-                        doc_id,
-                        campos.get('numero', 'N/A'),
-                        campos.get('nit', 'N/A'),
-                        campos.get('fecha') if campos.get('fecha') != 'N/A' else None,
-                        campos.get('entidad', 'N/A'),
-                        campos.get('campos_especificos', {}).get('Dirección de Facturación', 'N/A'),
-                        campos.get('total', 0.0),
-                        payload['url_archivo'],
-                        payload['url_vista'],
-                        ahora_str
-                    ))
-                elif 'Orden' in tipo:
-                    cur.execute('''
-                        INSERT INTO ordenes_compra 
-                        (documento_id, numero_orden, fecha_pedido, cliente_comprador, cant_items, total_liquidado, url_archivo, url_vista, fecha_registro)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ''', (
-                        doc_id,
-                        campos.get('numero', 'N/A'),
-                        campos.get('fecha') if campos.get('fecha') != 'N/A' else None,
-                        campos.get('entidad', 'N/A'),
-                        len(campos.get('productos', [])),
-                        campos.get('total', 0.0),
-                        payload['url_archivo'],
-                        payload['url_vista'],
-                        ahora_str
-                    ))
-                elif 'Despacho' in tipo or 'Comprobante' in tipo:
-                    cur.execute('''
-                        INSERT INTO despachos_envio 
-                        (documento_id, numero_guia, destinatario, transportadora, nit_cliente, fecha_pedido, fecha_despacho, direccion_entrega, cant_items, total_flete, url_archivo, url_vista, fecha_registro)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ''', (
-                        doc_id,
-                        campos.get('numero', 'N/A'),
-                        campos.get('entidad', 'N/A'),
-                        campos.get('campos_especificos', {}).get('Transportadora', 'N/A'),
-                        campos.get('nit', 'N/A'),
-                        campos.get('fecha') if campos.get('fecha') != 'N/A' else None,
-                        campos.get('campos_especificos', {}).get('Fecha de Despacho', None),
-                        campos.get('campos_especificos', {}).get('Dirección de Entrega', 'N/A'),
-                        len(campos.get('productos', [])),
-                        campos.get('total', 0.0),
-                        payload['url_archivo'],
-                        payload['url_vista'],
-                        ahora_str
-                    ))
-                elif 'Inventario' in tipo:
-                    tot_vend = sum(int(p.get('cantidad', 0)) for p in campos.get('productos', []))
-                    tot_stk = sum(int(p.get('precio_unitario', 0)) for p in campos.get('productos', []))
-                    try:
-                        cur.execute('''
-                            INSERT INTO reportes_inventario 
-                            (documento_id, identificador_reporte, periodo_mensual, fecha_corte, categoria_almacen, id_categoria, total_unidades_vendidas, total_existencias, estado_inventario, url_archivo, url_vista, fecha_registro)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ''', (
-                            doc_id,
-                            campos.get('numero', 'N/A'),
-                            campos.get('campos_especificos', {}).get('Periodo Mensual', '2016-07'),
-                            campos.get('fecha') if campos.get('fecha') != 'N/A' else None,
-                            campos.get('entidad', 'N/A'),
-                            campos.get('nit', 'N/A'),
-                            tot_vend,
-                            tot_stk,
-                            'Existencias Verificadas en Almacén',
-                            payload['url_archivo'],
-                            payload['url_vista'],
-                            ahora_str
-                        ))
-                    except Exception:
-                        cur.execute('''
-                            INSERT INTO reportes_inventario 
-                            (documento_id, identificador_reporte, periodo_mensual, fecha_corte, categoria, id_categoria, unidades_vendidas, unidades_stock, url_archivo, url_vista, fecha_registro)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ''', (
-                            doc_id,
-                            campos.get('numero', 'N/A'),
-                            campos.get('campos_especificos', {}).get('Periodo Mensual', '2016-07'),
-                            campos.get('fecha') if campos.get('fecha') != 'N/A' else None,
-                            campos.get('entidad', 'N/A'),
-                            campos.get('nit', 'N/A'),
-                            tot_vend,
-                            tot_stk,
-                            payload['url_archivo'],
-                            payload['url_vista'],
-                            ahora_str
-                        ))
-
-                # 3. Guardar items en tabla detalle
-                for p in campos.get('productos', []):
-                    try:
-                        cur.execute('''
-                            INSERT INTO items_detalle 
-                            (documento_id, tipo_documento, item_id_externo, nombre_producto, cantidad, precio_unitario, subtotal)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        ''', (
-                            doc_id,
-                            tipo,
-                            str(p.get('id', '')),
-                            str(p.get('nombre', 'Producto')),
-                            int(p.get('cantidad', 0)),
-                            float(p.get('precio_unitario', 0.0)),
-                            float(p.get('subtotal', 0.0))
-                        ))
-                    except Exception:
-                        try:
-                            cur.execute('''
-                                INSERT INTO items_detalle 
-                                (documento_id, nombre_producto, cantidad, precio_unitario, subtotal)
-                                VALUES (%s, %s, %s, %s, %s)
-                            ''', (
-                                doc_id,
-                                str(p.get('nombre', 'Producto')),
-                                int(p.get('cantidad', 0)),
-                                float(p.get('precio_unitario', 0.0)),
-                                float(p.get('subtotal', 0.0))
-                            ))
-                        except Exception:
-                            pass
-            conn_my.close()
-        except Exception as e:
-            print("⚠️ Error insertando en MySQL:", e)
+    if async_mysql:
+        _ensure_mysql_worker()
+        _mysql_sync_queue.put((payload, ahora_str))
+    else:
+        conn_my = get_mysql_connection()
+        if conn_my:
+            try:
+                doc_id = _insertar_en_mysql(conn_my, payload, ahora_str)
+                conn_my.close()
+            except Exception as e:
+                print("⚠️ Error insertando en MySQL:", e)
 
     # --- B. RESPALDO EN SQLITE ---
     try:
-        conn_sq = sqlite3.connect(DB_PATH)
-        cur_sq = conn_sq.cursor()
-        cur_sq.execute('''
-            INSERT INTO documentos_procesados 
-            (nombre_archivo, tipo_documento, confianza, numero_documento, fecha_documento, entidad, nit, total, fecha_procesamiento, tiempo_seg, url_vista, url_archivo, detalles_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            payload['nombre_archivo'],
-            tipo,
-            payload['confianza'],
-            campos['numero'],
-            campos['fecha'],
-            campos['entidad'],
-            campos['nit'],
-            campos['total'],
-            ahora_str,
-            payload['tiempo_proceso'],
-            payload['url_vista'],
-            payload['url_archivo'],
-            json.dumps(payload, ensure_ascii=False)
-        ))
-        if not doc_id:
-            doc_id = cur_sq.lastrowid
-        conn_sq.commit()
-        conn_sq.close()
+        with _SQLITE_LOCK:
+            conn_sq = sqlite3.connect(DB_PATH, timeout=15)
+            cur_sq = conn_sq.cursor()
+            cur_sq.execute('''
+                INSERT INTO documentos_procesados 
+                (nombre_archivo, tipo_documento, confianza, numero_documento, fecha_documento, entidad, nit, total, fecha_procesamiento, tiempo_seg, url_vista, url_archivo, detalles_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                payload['nombre_archivo'],
+                tipo,
+                payload['confianza'],
+                campos['numero'],
+                campos['fecha'],
+                campos['entidad'],
+                campos['nit'],
+                campos['total'],
+                ahora_str,
+                payload['tiempo_proceso'],
+                payload['url_vista'],
+                payload['url_archivo'],
+                json.dumps(payload, ensure_ascii=False)
+            ))
+            if not doc_id:
+                doc_id = cur_sq.lastrowid
+            conn_sq.commit()
+            conn_sq.close()
     except Exception as e:
         print("Aviso SQLite:", e)
 
@@ -1608,6 +1707,12 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
     idx_pred = int(np.argmax(prediccion[0]))
     clase_cnn = CLASSES[idx_pred]
     confianza_cnn = float(prediccion[0][idx_pred]) * 100
+
+    # Aplicar corrección activa si el usuario ya rectificó previamente este documento
+    corr_mem = cargar_correcciones_usuario().get(nombre_limpio)
+    if corr_mem:
+        clase_cnn = corr_mem['clase']
+        confianza_cnn = 100.0
 
     probabilidades_raw = {
         TRADUCCION_CLASES.get(CLASSES[i], CLASSES[i]): round(float(prediccion[0][i]) * 100, 2)
@@ -1749,17 +1854,18 @@ def procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=False):
         'llm_recomendacion': llm_res
     }
 
-    # Guardar en MySQL y SQLite
-    doc_id = guardar_en_bases_de_datos(payload_resultado)
+    # Guardar en MySQL (asíncrono en lote para máxima velocidad) y SQLite
+    doc_id = guardar_en_bases_de_datos(payload_resultado, async_mysql=modo_lote)
     payload_resultado['id'] = doc_id
 
     # Vincular documento_id con la recomendación generada en SQLite
     if doc_id and llm_res.get('id_recomendacion'):
         try:
-            conn_sq = sqlite3.connect(DB_PATH)
-            conn_sq.execute("UPDATE recomendaciones_llm SET documento_id = ? WHERE id = ?", (doc_id, llm_res['id_recomendacion']))
-            conn_sq.commit()
-            conn_sq.close()
+            with _SQLITE_LOCK:
+                conn_sq = sqlite3.connect(DB_PATH, timeout=15)
+                conn_sq.execute("UPDATE recomendaciones_llm SET documento_id = ? WHERE id = ?", (doc_id, llm_res['id_recomendacion']))
+                conn_sq.commit()
+                conn_sq.close()
         except Exception:
             pass
 
@@ -1961,6 +2067,7 @@ def predict_batch():
     if not files or len(files) == 0:
         return jsonify({'error': 'No se enviaron archivos en el lote', 'success': False}), 400
 
+    tareas = []
     resultados = []
     for file in files:
         if file and file.filename != '':
@@ -1969,7 +2076,7 @@ def predict_batch():
             if nombre_archivo.startswith('.') or nombre_archivo.endswith('_preview.jpg') or nombre_archivo.lower() == 'thumbs.db':
                 continue
 
-            # Si el usuario sube un archivo .zip con una pila de documentos, descomprimir y clasificar cada uno
+            # Si el usuario sube un archivo .zip con una pila de documentos, descomprimir y encolar cada uno
             if nombre_archivo.lower().endswith('.zip'):
                 import zipfile
                 zip_path = os.path.join(app.config['UPLOAD_FOLDER'], nombre_archivo)
@@ -1986,8 +2093,7 @@ def predict_batch():
                             if allowed_file(inner_name):
                                 with zf.open(member) as src, open(dest_path, 'wb') as dst:
                                     dst.write(src.read())
-                            res_inner = procesar_un_archivo(dest_path, inner_name, modo_lote=True)
-                            resultados.append(res_inner)
+                            tareas.append((dest_path, inner_name))
                 except Exception as e:
                     resultados.append({
                         'success': True,
@@ -2006,8 +2112,28 @@ def predict_batch():
             guardado_path = os.path.join(app.config['UPLOAD_FOLDER'], nombre_archivo)
             if allowed_file(nombre_archivo):
                 file.save(guardado_path)
-            res = procesar_un_archivo(guardado_path, nombre_archivo, modo_lote=True)
-            resultados.append(res)
+            tareas.append((guardado_path, nombre_archivo))
+
+    if tareas:
+        # Precargar modelo y lookup antes de lanzar hilos concurrentes
+        get_model()
+        get_dataset_lookup()
+        workers = min(4, len(tareas))
+        if workers > 1:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                resultados_paralelos = list(executor.map(
+                    lambda t: procesar_un_archivo(t[0], t[1], modo_lote=True),
+                    tareas
+                ))
+            resultados.extend(resultados_paralelos)
+        else:
+            resultados.append(procesar_un_archivo(tareas[0][0], tareas[0][1], modo_lote=True))
+
+    # Garantizar que todas las inserciones asíncronas a MySQL terminen antes de que CGI cierre el proceso
+    if _mysql_worker_started:
+        _mysql_sync_queue.join()
+    if hasattr(llm_engine, '_mysql_rec_queue'):
+        llm_engine._mysql_rec_queue.join()
 
     resumen_lote = generar_diagnostico_lote_ia(resultados)
     return jsonify({
@@ -2411,6 +2537,42 @@ def api_rl_feedback():
     datos_extraidos = data.get('datos_extraidos') or {}
     forzar_regeneracion = bool(data.get('regenerar', False))
     accion_preferida = data.get('accion_preferida')
+    clase_corregida = data.get('clase_corregida')
+    rectificado = False
+
+    # RECTIFICACIÓN ACTIVA DE CATEGORÍA SI EL USUARIO LA CORRIGIÓ
+    if clase_corregida and (clase_corregida != clase_raw):
+        rectificado = True
+        # 1. Penalizar la categoría anterior en el Agente RL
+        rl_agent.registrar_feedback(
+            documento_id=doc_id,
+            nombre_archivo=nombre_archivo,
+            clase_raw=clase_raw,
+            accion_id=accion_id,
+            calificacion_estrellas=1,
+            comentario=f"Clasificación rectificada por el usuario. No pertenecía a {tipo_es}.",
+            texto_recomendacion=texto_actual
+        )
+        # 2. Asignar nueva categoría y guardar en memoria permanente
+        if clase_corregida == 'separado':
+            clase_raw = 'separado'
+            tipo_es = 'Archivo Separado (No Pertenece al Modelo)'
+            confianza = 0.0
+        else:
+            clase_raw = clase_corregida
+            tipo_es = TRADUCCION_CLASES.get(clase_corregida, clase_corregida)
+            confianza = 100.0
+
+        if nombre_archivo:
+            guardar_correccion_usuario(nombre_archivo, clase_raw, tipo_es)
+
+        # 3. Re-extraer datos acordes al nuevo tipo
+        guardado_path = os.path.join(app.config['UPLOAD_FOLDER'], nombre_archivo) if nombre_archivo else None
+        if guardado_path and os.path.exists(guardado_path) and clase_raw != 'separado':
+            datos_extraidos = extraer_datos_documento(guardado_path, nombre_archivo, clase_raw)
+
+        # 4. Forzar regeneración con la nueva categoría
+        forzar_regeneracion = True
 
     # 1. Ejecutar actualización de Aprendizaje por Refuerzo (Bandido Contextual (Q-Learning TD))
     resultado_rl = rl_agent.registrar_feedback(
@@ -2468,8 +2630,12 @@ def api_rl_feedback():
                     det['llm_recomendacion']['calificacion_usuario'] = calificacion
                     det['llm_recomendacion']['recompensa_rl'] = resultado_rl['recompensa']
                     det['llm_recomendacion']['comentario_feedback'] = comentario
+                det['clase_raw'] = clase_raw
+                det['tipo_documento'] = tipo_es
+                det['confianza'] = confianza
+                det['datos_extraidos'] = datos_extraidos
                 det['ultimo_feedback_rl'] = resultado_rl
-                cur.execute("UPDATE documentos_procesados SET detalles_json = ? WHERE id = ?", (json.dumps(det, ensure_ascii=False), doc_id))
+                cur.execute("UPDATE documentos_procesados SET tipo_documento = ?, confianza = ?, detalles_json = ? WHERE id = ?", (tipo_es, confianza, json.dumps(det, ensure_ascii=False), doc_id))
                 conn_sq.commit()
             conn_sq.close()
         except Exception as e:
@@ -2490,8 +2656,12 @@ def api_rl_feedback():
                                 det_my['llm_recomendacion']['calificacion_usuario'] = calificacion
                                 det_my['llm_recomendacion']['recompensa_rl'] = resultado_rl['recompensa']
                                 det_my['llm_recomendacion']['comentario_feedback'] = comentario
+                            det_my['clase_raw'] = clase_raw
+                            det_my['tipo_documento'] = tipo_es
+                            det_my['confianza'] = confianza
+                            det_my['datos_extraidos'] = datos_extraidos
                             det_my['ultimo_feedback_rl'] = resultado_rl
-                            cur_my.execute("UPDATE documentos_procesados SET detalles_json = %s WHERE id = %s;", (json.dumps(det_my, ensure_ascii=False), doc_id))
+                            cur_my.execute("UPDATE documentos_procesados SET tipo_documento = %s, confianza = %s, detalles_json = %s WHERE id = %s;", (tipo_es, confianza, json.dumps(det_my, ensure_ascii=False), doc_id))
                     conn_my.close()
                 except Exception as e:
                     print("Aviso actualizando detalles_json MySQL con feedback RL:", e)
@@ -2500,7 +2670,11 @@ def api_rl_feedback():
     stats_actualizadas = rl_agent.obtener_estadisticas_rl()
     return jsonify({
         'success': True,
-        'mensaje': 'Feedback procesado exitosamente por el Agente de Aprendizaje por Refuerzo (Q-Learning).',
+        'rectificado': rectificado,
+        'nueva_clase': clase_raw,
+        'nuevo_tipo_documento': tipo_es,
+        'datos_extraidos': datos_extraidos,
+        'mensaje': '¡Feedback procesado exitosamente! El Agente de Aprendizaje por Refuerzo (Q-Learning) actualizó sus políticas y guardó el aprendizaje en memoria.' if not rectificado else f'¡Clasificación rectificada exitosamente a «{tipo_es}»! El modelo penalizó la categoría previa y guardó la corrección en memoria permanente.', 
         'rl_update': resultado_rl,
         'nueva_recomendacion': nueva_recomendacion,
         'rl_stats': stats_actualizadas
@@ -2747,9 +2921,37 @@ def api_evaluar_test():
             tasks_to_load.append((os.path.join(root, fn), idx_cls))
             por_clase[CLASSES[idx_cls]]['total'] += 1
 
-    total_eval = len(tasks_to_load)
-    if total_eval == 0:
+    total_dataset = len(tasks_to_load)
+    if total_dataset == 0:
         return jsonify({'success': False, 'error': 'No hay imágenes en documentos_de_prueba'}), 404
+
+    payload_req = request.get_json(silent=True) or {}
+    offset = int(payload_req.get('offset', request.args.get('offset', 0)) or 0)
+    limit = int(payload_req.get('limit', request.args.get('limit', 0)) or 0)
+    if limit > 0:
+        tasks_slice = tasks_to_load[offset:offset + limit]
+        # Recalcular totales por clase solo para este bloque
+        for cls_name in CLASSES:
+            por_clase[cls_name]['total'] = 0
+        for _, idx_cls in tasks_slice:
+            por_clase[CLASSES[idx_cls]]['total'] += 1
+    else:
+        tasks_slice = tasks_to_load
+
+    total_eval = len(tasks_slice)
+    if total_eval == 0:
+        return jsonify({
+            'success': True,
+            'total_dataset': total_dataset,
+            'offset': offset,
+            'total_evaluados': 0,
+            'aciertos': 0,
+            'errores': 0,
+            'sum_neg_log_prob': 0.0,
+            'sum_max_conf': 0.0,
+            'por_clase': por_clase,
+            'tiempo_inferencia_ms': 0.0
+        })
 
     def _load_one(item):
         fpath, idx_cls = item
@@ -2757,15 +2959,18 @@ def api_evaluar_test():
             arr = np.asarray(im.convert('RGB').resize((160, 160)), dtype=np.float32)
         return arr, idx_cls
 
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        loaded = list(ex.map(_load_one, tasks_to_load))
-
-    X_all = np.stack([it[0] for it in loaded], axis=0)
-    y_true = np.array([it[1] for it in loaded], dtype=np.int64)
-
-    # Inferencia por lotes de 8 (óptimo para caché L3 y multihilo OpenBLAS) mediante forward propagation real
+    # Inferencia por lotes de 8 en streaming para mantener bajo el uso de memoria RAM
     batch_size = 8
-    probs_list = [model_instance.predict(X_all[i:i + batch_size], verbose=0) for i in range(0, total_eval, batch_size)]
+    probs_list = []
+    y_true_list = []
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for i in range(0, total_eval, batch_size):
+            chunk = tasks_slice[i:i + batch_size]
+            loaded = list(ex.map(_load_one, chunk))
+            X_batch = np.stack([it[0] for it in loaded], axis=0)
+            y_true_list.extend([it[1] for it in loaded])
+            probs_list.append(model_instance.predict(X_batch, verbose=0))
+    y_true = np.array(y_true_list, dtype=np.int64)
     probs_all = np.vstack(probs_list)
     y_pred = np.argmax(probs_all, axis=1)
     max_confs = np.max(probs_all, axis=1)
@@ -2773,7 +2978,10 @@ def api_evaluar_test():
     # Calcular pérdida Sparse Categorical Crossentropy real en vivo
     eps = 1e-12
     true_probs = np.clip(probs_all[np.arange(total_eval), y_true], eps, 1.0)
-    live_loss = float(-np.mean(np.log(true_probs)))
+    neg_log_probs = -np.log(true_probs)
+    sum_neg_log_prob = float(np.sum(neg_log_probs))
+    sum_max_conf = float(np.sum(max_confs))
+    live_loss = float(sum_neg_log_prob / total_eval)
 
     aciertos = int(np.sum(y_pred == y_true))
     errores = int(total_eval - aciertos)
@@ -2798,9 +3006,13 @@ def api_evaluar_test():
 
     return jsonify({
         'success': True,
+        'total_dataset': total_dataset,
+        'offset': offset,
         'total_evaluados': total_eval,
         'aciertos': aciertos,
         'errores': errores,
+        'sum_neg_log_prob': sum_neg_log_prob,
+        'sum_max_conf': sum_max_conf,
         'tasa_acierto': round(tasa_acierto, 4),
         'tasa_acierto_pct': round(tasa_acierto * 100.0, 2),
         'tasa_error': round(tasa_error, 4),
@@ -2904,30 +3116,6 @@ def api_exportar_csv():
     )
 
 
-@app.route('/api/rl/simular_episodio', methods=['POST'])
-def api_rl_simular_episodio():
-    """Ejecuta un episodio interactivo de prueba en el Agente RL para demostrar el aprendizaje Q-Learning."""
-    data = request.get_json(force=True, silent=True) or {}
-    estado = data.get('estado', 'invoices')
-    accion = data.get('accion', 'auditoria_contable')
-    estrellas = int(data.get('estrellas', 5))
-    comentario = data.get('comentario', f'Episodio de calibración RL sobre estado {estado}')
-
-    res_rl = rl_agent.registrar_feedback(
-        documento_id=None,
-        nombre_archivo=f'Simulacion_RL_{estado}.jpg',
-        clase_raw=estado,
-        accion_id=accion,
-        calificacion_estrellas=estrellas,
-        comentario=comentario
-    )
-    stats = rl_agent.obtener_estadisticas_rl()
-    stats['modelo_llm_activo'] = llm_engine.model_name
-    return jsonify({
-        'success': True,
-        'rl_update': res_rl,
-        'rl_stats': stats
-    })
 
 
 @app.route('/api/limpiar_historial', methods=['POST'])

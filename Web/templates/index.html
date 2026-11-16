@@ -531,6 +531,27 @@
               </div>
             </div>
 
+            <!-- Selector de Rectificación Humana de Clasificación -->
+            <div class="flex flex-wrap items-center justify-between gap-2 bg-white/95 p-2.5 rounded-xl border border-amber-200">
+              <div class="flex items-center gap-1.5 text-xs text-slate-700 font-bold">
+                <i data-lucide="check-check" class="w-4 h-4 text-amber-600"></i>
+                <span>¿La categoría clasificada fue correcta?:</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <select id="selectCorregirClaseMain" onchange="alCambiarCorreccionClase('main')" class="text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-amber-500 font-medium text-slate-800">
+                  <option value="">✅ Sí, categoría correcta</option>
+                  <option value="invoices">🧾 Corregir a: Factura Comercial</option>
+                  <option value="PurchaseOrders">📑 Corregir a: Orden de Compra</option>
+                  <option value="Shipping orders">🚚 Corregir a: Despacho de Envío</option>
+                  <option value="Inventory Report">📦 Corregir a: Reporte de Inventario</option>
+                  <option value="separado">🚫 Separar (No Pertenece al Modelo)</option>
+                </select>
+                <span id="labelAvisoCorreccionMain" class="hidden text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-300">
+                  Se penalizará el modelo y se rectificará la BD
+                </span>
+              </div>
+            </div>
+
             <!-- Entrada de Comentario Opcional + Enviar -->
             <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
               <input type="text" id="inputComentarioRLMain" placeholder="Comentario u observación para orientar la política (opcional)..." class="flex-1 text-xs px-3 py-2 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-amber-500">
@@ -706,10 +727,6 @@
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-          <button type="button" onclick="simularEpisodioRL()" class="px-3 py-1.5 text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg flex items-center gap-1.5 transition" title="Simular un episodio interactivo de Q-Learning">
-            <i data-lucide="zap" class="w-3.5 h-3.5"></i>
-            <span>Simular Episodio RL</span>
-          </button>
           <button type="button" onclick="cargarRLStats()" class="px-3 py-1.5 text-xs font-semibold bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg flex items-center gap-1.5 transition">
             <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
             <span>Actualizar</span>
@@ -1110,6 +1127,17 @@
                   <button type="button" onclick="enviarFeedbackRapido('modal', 4)" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-bold">👌 4★ (+0.6)</button>
                   <button type="button" onclick="enviarFeedbackRapido('modal', 2)" class="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-bold">👎 2★ (-0.55)</button>
                 </div>
+              </div>
+              <div class="flex items-center justify-between gap-2 bg-white/95 p-2 rounded-lg border border-amber-200 text-[11px]">
+                <span class="font-bold text-slate-700">¿Categoría correcta?:</span>
+                <select id="selectCorregirClaseModal" onchange="alCambiarCorreccionClase('modal')" class="text-[11px] px-2 py-1 bg-white border border-slate-300 rounded-lg text-slate-800">
+                  <option value="">✅ Sí, correcta</option>
+                  <option value="invoices">🧾 Factura Comercial</option>
+                  <option value="PurchaseOrders">📑 Orden de Compra</option>
+                  <option value="Shipping orders">🚚 Despacho de Envío</option>
+                  <option value="Inventory Report">📦 Reporte de Inventario</option>
+                  <option value="separado">🚫 Separar Archivo</option>
+                </select>
               </div>
               <div class="flex items-center gap-2">
                 <input type="text" id="inputComentarioRLModal" placeholder="Comentario u observación para ajustar el Agente RL..." class="flex-1 text-[11px] px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg">
@@ -1532,7 +1560,7 @@
         actualizarKpisLoteEnVivo();
 
         const totalArchivos = selectedFiles.length;
-        const BATCH_SIZE = 8;
+        const BATCH_SIZE = 12;
         let procesados = 0;
 
         for (let i = 0; i < totalArchivos; i += BATCH_SIZE) {
@@ -1570,11 +1598,6 @@
               batchPercentText.textContent = `${porcentaje}%`;
               batchCountBadge.textContent = `${procesados} / ${totalRef} procesados (${porcentaje}%)`;
               batchStatusText.textContent = `Analizando y separando archivos: ${procesados} de ${totalRef}...`;
-
-              if (procesados % 24 === 0 || procesados >= totalArchivos) {
-                cargarStats();
-                cargarHistorial();
-              }
             }
           } catch (err) {
             console.error("Error en bloque:", err);
@@ -1690,6 +1713,11 @@
       renderizarListaLoteFiltrada();
     }
 
+    function abrirModalLotePorOrden(orden) {
+      const item = loteResultadosActuales.find(r => r._orden_lote === orden);
+      if (item) abrirModalConObjeto(item);
+    }
+
     function renderizarListaLoteFiltrada() {
       batchItemsList.innerHTML = '';
       const filtrados = loteResultadosActuales.filter(item => {
@@ -1704,7 +1732,11 @@
         return;
       }
 
-      filtrados.slice().reverse().forEach(item => {
+      const MAX_VISIBLE = 100;
+      const visibles = filtrados.slice(-MAX_VISIBLE).reverse();
+      const frag = document.createDocumentFragment();
+
+      visibles.forEach(item => {
         const div = document.createElement('div');
         div.className = "py-2.5 px-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs hover:bg-slate-50 rounded-lg transition";
 
@@ -1733,13 +1765,22 @@
             <span class="font-bold mono text-[11px] ${esValido ? 'text-emerald-600' : 'text-rose-600'}">
               ${esValido ? Number(item.confianza).toFixed(1) + '%' : 'Separado'}
             </span>
-            <button onclick="abrirModalConObjeto(${JSON.stringify(item).replace(/"/g, '&quot;')})" class="p-1 px-2 text-[11px] font-semibold bg-white hover:bg-blue-50 text-blue-600 border border-slate-200 rounded-md flex items-center gap-1 transition shadow-sm">
+            <button onclick="abrirModalLotePorOrden(${item._orden_lote || 1})" class="p-1 px-2 text-[11px] font-semibold bg-white hover:bg-blue-50 text-blue-600 border border-slate-200 rounded-md flex items-center gap-1 transition shadow-sm">
               <i data-lucide="eye" class="w-3 h-3"></i> Ver
             </button>
           </div>
         `;
-        batchItemsList.appendChild(div);
+        frag.appendChild(div);
       });
+
+      if (filtrados.length > MAX_VISIBLE) {
+        const info = document.createElement('div');
+        info.className = "py-2 text-center text-[11px] text-slate-400 italic";
+        info.textContent = `Mostrando los ${MAX_VISIBLE} más recientes de ${filtrados.length} archivos (todos incluidos en el CSV).`;
+        frag.appendChild(info);
+      }
+
+      batchItemsList.appendChild(frag);
       lucide.createIcons();
     }
 
@@ -2601,6 +2642,22 @@
       }
     }
 
+    function alCambiarCorreccionClase(scope) {
+      const selCorr = document.getElementById(scope === 'modal' ? 'selectCorregirClaseModal' : 'selectCorregirClaseMain');
+      const val = selCorr ? selCorr.value : '';
+      const aviso = document.getElementById('labelAvisoCorreccionMain');
+      const btn = document.getElementById(scope === 'modal' ? 'btnEnviarFeedbackModal' : 'btnEnviarFeedbackMain');
+      if (val) {
+        seleccionarEstrellas(scope, 1);
+        if (aviso) aviso.classList.remove('hidden');
+        if (btn) btn.innerHTML = `<span>⚡ Rectificar Categoría y Entrenar RL</span>`;
+      } else {
+        seleccionarEstrellas(scope, 5);
+        if (aviso) aviso.classList.add('hidden');
+        if (btn) btn.innerHTML = `<span>Enviar Calificación</span>`;
+      }
+    }
+
     function enviarFeedbackRapido(scope, estrellas) {
       seleccionarEstrellas(scope, estrellas);
       enviarFeedbackRL(scope, estrellas);
@@ -2616,14 +2673,15 @@
       const comentario = comentarioOverride !== null ? comentarioOverride : (inputCom ? inputCom.value.trim() : '');
       const selectAcc = document.getElementById(scope === 'modal' ? 'selectAccionRLModal' : 'selectAccionRLMain');
       const accionPreferida = selectAcc ? selectAcc.value : '';
+      const selCorr = document.getElementById(scope === 'modal' ? 'selectCorregirClaseModal' : 'selectCorregirClaseMain');
+      const claseCorregida = selCorr ? selCorr.value : '';
 
       const llmActual = targetData.llm_recomendacion || (targetData.detalles && targetData.detalles.llm_recomendacion) || {};
       const rlDec = llmActual.rl_decision || {};
       const datosExt = targetData.datos_extraidos || (targetData.detalles && targetData.detalles.datos_extraidos) || {};
 
-      // Solo regeneramos sincrónicamente si la calificación es negativa (<= 2★), o 3★ con corrección, o si el usuario pidió regenerar explícitamente.
-      // Si es positiva (4★ o 5★, ej. "Bien clasificado"), guardamos en Q-Learning + Memoria RLHF al instante (< 50ms) sin bloquear.
-      const vaARegenerar = Boolean(forzarRegenerar || estrellas <= 2 || (estrellas === 3 && comentario.length > 0) || accionPreferida);
+      // Solo regeneramos sincrónicamente si la calificación es negativa (<= 2★), o corrección de clase, o si el usuario pidió regenerar explícitamente.
+      const vaARegenerar = Boolean(forzarRegenerar || estrellas <= 2 || (estrellas === 3 && comentario.length > 0) || accionPreferida || claseCorregida);
 
       const btnSend = document.getElementById(scope === 'modal' ? 'btnEnviarFeedbackModal' : 'btnEnviarFeedbackMain');
       const btnOrigHtml = btnSend ? btnSend.innerHTML : '';
@@ -2643,6 +2701,7 @@
         accion_id: rlDec.accion_id || 'auditoria_contable',
         calificacion: estrellas,
         comentario: comentario,
+        clase_corregida: claseCorregida,
         texto_recomendacion: llmActual.texto || '',
         datos_extraidos: datosExt,
         accion_preferida: accionPreferida,
@@ -2659,6 +2718,24 @@
         const elapsedMs = Math.round(performance.now() - tInicio);
 
         if (resp.success) {
+          if (resp.rectificado) {
+            targetData.clase_raw = resp.nueva_clase;
+            targetData.tipo_documento = resp.nuevo_tipo_documento;
+            if (targetData.detalles) {
+              targetData.detalles.clase_raw = resp.nueva_clase;
+              targetData.detalles.tipo_documento = resp.nuevo_tipo_documento;
+              if (resp.datos_extraidos) targetData.detalles.datos_extraidos = resp.datos_extraidos;
+            }
+            if (scope === 'main') {
+              const bTipo = document.getElementById('resultadoTipoBadge');
+              if (bTipo) bTipo.textContent = resp.nuevo_tipo_documento;
+            }
+            if (typeof cargarHistorial === 'function') {
+              cargarHistorial();
+            }
+            const avisoCorr = document.getElementById('labelAvisoCorreccionMain');
+            if (avisoCorr) avisoCorr.classList.add('hidden');
+          }
           const upd = resp.rl_update;
           if (resp.nueva_recomendacion) {
             targetData.llm_recomendacion = resp.nueva_recomendacion;
@@ -2998,12 +3075,83 @@
       box.classList.remove('hidden');
       box.innerHTML = `<div class="text-slate-600 font-semibold">Ejecutando forward pass convolucional (conv1 &rarr; conv2 &rarr; conv3 &rarr; conv4 &rarr; dense1 &rarr; softmax) sobre todas las imágenes del directorio <code class="mono">documentos_de_prueba/</code>...</div>`;
       try {
-        const res = await fetch('api/evaluar_test', { method: 'POST' });
-        const d = await res.json();
-        if (!d.success) {
-          box.innerHTML = `<div class="text-rose-700 font-bold">Error: ${d.error || 'No se pudo completar la evaluación'}</div>`;
-          return;
+        const CHUNK_LIMIT = 12;
+        let offset = 0;
+        let totalDataset = null;
+        let totalEvaluados = 0;
+        let totalAciertos = 0;
+        let sumNegLogProb = 0;
+        let sumMaxConf = 0;
+        let totalMs = 0;
+        const porClaseAcum = {};
+
+        while (totalDataset === null || offset < totalDataset) {
+          const progTxt = totalDataset ? `${Math.min(offset, totalDataset)} / ${totalDataset}` : 'iniciando...';
+          btn.innerHTML = `<span>⏳ Evaluando (${progTxt})...</span>`;
+          box.innerHTML = `<div class="text-slate-600 font-semibold">Ejecutando forward pass convolucional en vivo (conv1 &rarr; conv2 &rarr; conv3 &rarr; conv4 &rarr; dense1 &rarr; softmax) sobre <code class="mono">documentos_de_prueba/</code> (${progTxt})...</div>`;
+
+          const res = await fetch('api/evaluar_test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ offset, limit: CHUNK_LIMIT })
+          });
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status} al evaluar bloque (offset ${offset})`);
+          }
+          const part = await res.json();
+          if (!part.success) {
+            box.innerHTML = `<div class="text-rose-700 font-bold">Error: ${part.error || 'No se pudo completar la evaluación'}</div>`;
+            return;
+          }
+
+          totalDataset = part.total_dataset || 0;
+          totalEvaluados += part.total_evaluados || 0;
+          totalAciertos += part.aciertos || 0;
+          sumNegLogProb += part.sum_neg_log_prob || 0;
+          sumMaxConf += part.sum_max_conf || 0;
+          totalMs += part.tiempo_inferencia_ms || 0;
+
+          if (part.por_clase) {
+            Object.keys(part.por_clase).forEach(k => {
+              const c = part.por_clase[k];
+              if (!porClaseAcum[k]) {
+                porClaseAcum[k] = { nombre_es: c.nombre_es, total: 0, aciertos: 0, errores: 0 };
+              }
+              porClaseAcum[k].total += c.total || 0;
+              porClaseAcum[k].aciertos += c.aciertos || 0;
+              porClaseAcum[k].errores += c.errores || 0;
+            });
+          }
+
+          if ((part.total_evaluados || 0) === 0) break;
+          offset += CHUNK_LIMIT;
         }
+
+        const tasaAcierto = totalEvaluados > 0 ? totalAciertos / totalEvaluados : 0;
+        const tasaError = totalEvaluados > 0 ? (totalEvaluados - totalAciertos) / totalEvaluados : 0;
+        const liveLoss = totalEvaluados > 0 ? sumNegLogProb / totalEvaluados : 0;
+        const confMediaPct = totalEvaluados > 0 ? ((sumMaxConf / totalEvaluados) * 100).toFixed(2) : '0.00';
+
+        Object.keys(porClaseAcum).forEach(k => {
+          const c = porClaseAcum[k];
+          const totC = Math.max(1, c.total);
+          c.tasa_acierto = c.aciertos / totC;
+          c.tasa_error = c.errores / totC;
+        });
+
+        const d = {
+          tiempo_inferencia_ms: totalMs.toFixed(1),
+          tasa_acierto: tasaAcierto,
+          tasa_acierto_pct: tasaAcierto * 100,
+          tasa_error: tasaError,
+          tasa_error_pct: tasaError * 100,
+          aciertos: totalAciertos,
+          total_evaluados: totalEvaluados,
+          live_loss: liveLoss,
+          confianza_media_pct: confMediaPct,
+          por_clase: porClaseAcum
+        };
+
         let clasesHtml = '';
         if (d.por_clase) {
           Object.keys(d.por_clase).forEach(k => {
@@ -3143,32 +3291,6 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    }
-
-    async function simularEpisodioRL() {
-      const estados = ['invoices', 'PurchaseOrders', 'Shipping orders', 'Inventory Report'];
-      const acciones = ['auditoria_contable', 'operaciones_logistica', 'financiero_tesoreria', 'control_interno_riesgos'];
-      const estadoRand = estados[Math.floor(Math.random() * estados.length)];
-      const accionRand = acciones[Math.floor(Math.random() * acciones.length)];
-      const estrellasRand = [5, 5, 4, 5, 2][Math.floor(Math.random() * 5)];
-      try {
-        const res = await fetch('api/rl/simular_episodio', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            estado: estadoRand,
-            accion: accionRand,
-            estrellas: estrellasRand,
-            comentario: `Simulación interactiva Q-Learning (${estrellasRand}★) sobre ${estadoRand}`
-          })
-        });
-        const data = await res.json();
-        if (data.success) {
-          cargarRLStats();
-        }
-      } catch (e) {
-        console.error("Error simulando episodio RL:", e);
-      }
     }
 
     // Inicializar
